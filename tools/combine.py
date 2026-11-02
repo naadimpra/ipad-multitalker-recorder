@@ -27,7 +27,7 @@ TARGET_PEAK = 0.89  # about -1 dBFS
 
 def default_devices(adir: Path, meta: dict) -> list[str]:
     have = [k for k in sorted(meta["devices"]) if (adir / f"{k}.wav").exists()]
-    spk = [k for k in have if k.startswith("spk")]
+    spk = [k for k in have if k not in ("center", "lav")]
     return spk if len(spk) >= 2 else have
 
 

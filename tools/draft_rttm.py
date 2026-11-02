@@ -2,7 +2,7 @@
 
     python -m tools.draft_rttm recordings/<session_id>
 
-Mode B: uses aligned/spk1..spk4.wav (one iPad near each speaker).
+Mode B: uses aligned/spk1, spk2, ... (one iPad near each speaker, any number).
 Mode A: uses aligned/lav.wav only if it has one channel per speaker; a single
         mixed channel needs a diarization model instead (e.g. pyannote).
 
@@ -81,7 +81,7 @@ def main() -> None:
     for key in sorted(meta["devices"]):
         d = meta["devices"][key]
         f = adir / f"{key}.wav"
-        if key.startswith("spk") and f.exists():
+        if key not in ("center", "lav") and f.exists():
             chans.append((d.get("speaker_id") or key, f, None))
     if not chans and (adir / "lav.wav").exists():
         nch = sf.info(str(adir / "lav.wav")).channels

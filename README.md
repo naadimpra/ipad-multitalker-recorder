@@ -16,9 +16,11 @@ your own machine.
 | Mode | Hardware | Output |
 |---|---|---|
 | **A** | 1 iPad + 4-channel lavalier receiver | `lav.wav` |
-| **B** | 4 iPads (one per speaker) + 1 iPad in the center | `spk1..spk4.wav`, `center.wav` (aligned) |
+| **B** | Any number of iPads (e.g. one per speaker) + optional iPad in the center | one aligned WAV per device, named after its device name |
 
-Positions are only labels, so other layouts work too.
+The number of devices is not fixed. Each iPad gets a **device name** you type (or pick from the quick chips S1–S4,
+Center, Lav). Names are free text (letters, digits, `-`, `_`) and become the file names, so `spk1`, `alice` or
+`table-left` all work. `center` and `lav` are treated as room/receiver mics; every other name is a speaker iPad.
 
 ## Requirements
 
@@ -51,11 +53,11 @@ Safari only allows the microphone over trusted HTTPS, so each device must trust 
 
 ## Running a session
 
-1. On each iPad, open `https://<laptop-ip>:8443/record`, pick its position chip (S1–S4, Center, Lav),
+1. On each iPad, open `https://<laptop-ip>:8443/record`, type a device name (or tap a quick chip: S1–S4, Center, Lav),
    tap **Arm microphone** and allow mic access. Then triple-click the Home button to start Guided Access.
 2. On the admin device (a phone or a Mac), open `https://<laptop-ip>:8443/control`. The big status shows
    whether everything is ready ("Ready", or "N to fix" with the reasons underneath).
-   - **Tap a device row** to expand it: position chips, participant ID, label language, participant view,
+   - **Tap a device row** to expand it: device name, participant ID, label language, participant view,
      Identify (flashes that iPad's screen). A coloured dot and a few flags show its state; a flag only
      appears when something is wrong.
    - **Disarm** (in the expanded row, or **Disarm all** in the Speaker iPads card) releases an iPad's microphone
@@ -71,6 +73,8 @@ Safari only allows the microphone over trusted HTTPS, so each device must trust 
 If a banner appears at the top of the admin page, an iPad is running an old copy of the page or the server
 needs a restart after a code change: reload that iPad's page (close the tab if needed) or restart
 `python server.py`.
+
+Each device needs a unique name when a session starts; any number of armed devices can record at once.
 
 Each session is saved in `recordings/<date>_<name>/`: one WAV per device plus `session.json` (devices,
 participant IDs, chirp and marker times, interruptions, labels).
@@ -103,7 +107,7 @@ Labels are saved per device in `session.json` as an emotion plus an audio frame 
   ±10–60 ppm, which grows to 100+ ms per hour) and shifts all tracks onto one timeline. It writes
   `aligned/*.wav`, `alignment.json`, `markers.tsv` and `emotions.tsv` (labels on the aligned timeline), and
   merges the speaker tracks into `aligned/combined.wav` (one channel per iPad, order in `combined.json`) and
-  `aligned/mix_mono.wav`. Use `python -m tools.combine recordings/<session> --devices spk1,spk2,center` to pick
+  `aligned/mix_mono.wav`. Use `python -m tools.combine recordings/<session> --devices spk1,alice,center` to pick
   the channels. If a chirp is missing it warns, and that track falls back to network timestamps (accurate to
   roughly 20–100 ms).
 - **`draft_rttm`** compares the close-talk channels' energy to produce `aligned/draft.rttm`, rejecting crosstalk

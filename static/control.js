@@ -5,7 +5,6 @@ const BUILD = "__BUILD__"; // replaced by the server
 
 const $ = (id) => document.getElementById(id);
 const POS = [["spk1", "S1"], ["spk2", "S2"], ["spk3", "S3"], ["spk4", "S4"], ["center", "Center"], ["lav", "Lav"]];
-const EXPECTED = { A: ["lav"], B: ["spk1", "spk2", "spk3", "spk4", "center"] };
 const PRE_CHIRP_S = 1.5; // start chirp plays this long after the session starts
 
 const clock = new Clock();
@@ -112,10 +111,12 @@ function makeSlide(el, onDone) {
 function preflight() {
   const devs = (state?.devices || []).filter((d) => d.online);
   const issues = [];
-  for (const l of EXPECTED[mode]) {
-    const d = devs.find((x) => x.label === l);
-    if (!d) issues.push(`${l} offline`);
-    else if (!d.armed) issues.push(`${l} not armed`);
+  // any number of devices: every online device for this mode must be ready
+  const mine = devs.filter((d) => (mode === "A" ? d.label === "lav" : d.label !== "lav"));
+  if (!mine.some((d) => mode === "A" || isSpk(d.label))) issues.push(mode === "A" ? "lav offline" : "no speaker devices");
+  for (const d of mine) {
+    const l = d.label;
+    if (!d.armed) issues.push(`${l} not armed`);
     else if (d.ctx !== "running") issues.push(`${l} audio ${d.ctx}`);
     else if (d.quiet) issues.push(`${l} quiet`);
   }
@@ -181,6 +182,7 @@ const fmt = (s) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(
 const rows = new Map();
 const open = new Set();
 const emoji = (id) => (EMOTIONS.find((x) => x.id === id) || {}).emoji || "";
+const isSpk = (l) => !!l && l !== "center" && l !== "lav";
 const posRank = (l) => { const i = POS.findIndex(([v]) => v === l); return i < 0 ? 99 : i; };
 
 function makeRow(d) {
@@ -196,6 +198,7 @@ function makeRow(d) {
         <span class="chev">›</span>
       </div>
       <div class="devpanel" hidden>
+        <input class="lbl" placeholder="Device name (e.g. spk1, alice)" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" maxlength="24">
         <div class="chips pos">${POS.map(([v, t]) => `<button class="chip" data-pos="${v}">${t}</button>`).join("")}</div>
         <input class="spk" placeholder="Participant ID" autocomplete="off" autocapitalize="off">
         <div class="row">
@@ -216,6 +219,7 @@ function makeRow(d) {
     panel.hidden = !o; dev.classList.toggle("open", o);
   };
   for (const b of wrap.querySelectorAll(".pos .chip")) b.onclick = () => send({ type: "assign", id: d.id, label: b.dataset.pos });
+  wrap.querySelector(".lbl").onchange = (e) => { const v = e.target.value.replace(/[^A-Za-z0-9_-]+/g, ""); if (v) send({ type: "assign", id: d.id, label: v }); else e.target.value = d.label || ""; };
   wrap.querySelector(".spk").onchange = (e) => send({ type: "assign", id: d.id, speaker: e.target.value });
   for (const b of wrap.querySelectorAll(".lg button")) b.onclick = () => send({ type: "lang", id: d.id, lang: b.dataset.lang });
   wrap.querySelector(".pv").onchange = (e) => send({ type: "view", id: d.id, participant: e.target.checked });
@@ -284,6 +288,9 @@ function updateRow(wrap, d, s) {
   wrap.querySelector(".devpanel").hidden = !o;
   wrap.querySelector(".dev").classList.toggle("open", o);
   for (const b of wrap.querySelectorAll(".pos .chip")) { b.classList.toggle("on", b.dataset.pos === d.label); b.disabled = !!d.recording; }
+  const lbl = wrap.querySelector(".lbl");
+  if (document.activeElement !== lbl) lbl.value = d.label || "";
+  lbl.disabled = !!d.recording;
   const spk = wrap.querySelector(".spk");
   if (document.activeElement !== spk) spk.value = d.speaker || "";
   spk.disabled = !!d.recording;
@@ -359,7 +366,7 @@ function render() {
   $("force").hidden = !(stoppingSince && Date.now() - stoppingSince > 15000);
 
   // all speaker iPads
-  const spk = online.filter((d) => String(d.label).startsWith("spk"));
+  const spk = online.filter((d) => isSpk(d.label));
   $("group").hidden = !spk.length;
   if (spk.length) {
     $("pvAll").checked = spk.every((d) => d.participant);

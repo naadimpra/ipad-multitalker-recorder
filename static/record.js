@@ -17,6 +17,7 @@ try { tabId = sessionStorage.getItem("tabId") || rand().slice(0, 8); sessionStor
 catch { tabId = rand().slice(0, 8); }
 const deviceId = `${baseId}-${tabId}`;
 $("label").value = store.get("label") || "spk1";
+const cleanLabel = (s) => String(s || "").replace(/[^A-Za-z0-9_-]+/g, "").slice(0, 24);
 const POS = [["spk1", "S1"], ["spk2", "S2"], ["spk3", "S3"], ["spk4", "S4"], ["center", "Center"], ["lav", "Lav"]];
 function renderChips() { for (const b of $("posChips").children) b.classList.toggle("on", b.dataset.pos === $("label").value); }
 for (const [v, t] of POS) {
@@ -406,9 +407,9 @@ async function rearm() {
   await arm();
 }
 $("mic").onchange = () => { store.set("mic", $("mic").value); if (armed && !(rec && !rec.stopped)) rearm(); };
-for (const id of ["label", "speaker"]) {
-  $(id).onchange = () => { store.set(id, $(id).value); };
-}
+$("label").oninput = () => { const v = cleanLabel($("label").value); if (v !== $("label").value) $("label").value = v; renderChips(); };
+$("label").onchange = () => { $("label").value = cleanLabel($("label").value) || "spk1"; store.set("label", $("label").value); renderChips(); };
+$("speaker").onchange = () => { store.set("speaker", $("speaker").value); };
 
 // ---------------- UI + status ----------------
 const fmt = (s) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;

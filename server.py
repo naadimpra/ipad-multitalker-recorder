@@ -252,6 +252,15 @@ class Hub:
 hub = Hub()
 
 
+def clean_label(s) -> str:
+    """Device names are free text but end up in file names, so keep them filesystem-safe."""
+    return re.sub(r"[^A-Za-z0-9_-]+", "", str(s or ""))[:24]
+
+
+def is_speaker(label) -> bool:
+    return bool(label) and label not in ("center", "lav")
+
+
 # ---------------- HTTP routes ----------------
 @app.middleware("http")
 async def no_cache(request, call_next):
@@ -304,6 +313,7 @@ async def ws_endpoint(ws: WebSocket):
                 else:
                     did = m["id"]
                     old = hub.devices.get(did, {})
+                    m["label"] = clean_label(m.get("label")) or "device"
                     hub.devices[did] = old | {k: v for k, v in m.items() if k not in ("type", "role", "id")} \
                         | {"ws": ws, "online": True}
                     s = hub.session
@@ -358,20 +368,22 @@ async def ws_endpoint(ws: WebSocket):
                     await hub.to_device(m["id"], {"type": "lang", "lang": "en" if m.get("lang") == "en" else "ja"})
                 elif t == "lang_all":
                     for vid, vd in list(hub.devices.items()):
-                        if vd.get("ws") and str(vd.get("label", "")).startswith("spk"):
+                        if vd.get("ws") and is_speaker(vd.get("label")):
                             await hub.to_device(vid, {"type": "lang", "lang": "en" if m.get("lang") == "en" else "ja"})
                 elif t == "disarm":
                     await hub.to_device(m["id"], {"type": "disarm"})
                 elif t == "disarm_all":
                     for vid, vd in list(hub.devices.items()):
-                        if vd.get("ws") and str(vd.get("label", "")).startswith("spk"):
+                        if vd.get("ws") and is_speaker(vd.get("label")):
                             await hub.to_device(vid, {"type": "disarm"})
                 elif t == "view_all":
                     for vid, vd in list(hub.devices.items()):
-                        if vd.get("ws") and str(vd.get("label", "")).startswith("spk"):
+                        if vd.get("ws") and is_speaker(vd.get("label")):
                             await hub.to_device(vid, {"type": "view", "participant": bool(m.get("participant"))})
                 elif t == "assign" and m.get("id") in hub.devices:
                     upd = {k: m[k] for k in ("label", "speaker") if k in m}
+                    if "label" in upd:
+                        upd["label"] = clean_label(upd["label"]) or "device"
                     hub.devices[m["id"]].update(upd)
                     await hub.to_device(m["id"], {"type": "assign", **upd})
     except WebSocketDisconnect:

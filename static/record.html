@@ -10,10 +10,7 @@
 
   <section class="card" id="setup">
     <div class="chips" id="posChips"></div>
-    <select id="label" hidden>
-      <option value="spk1">spk1</option><option value="spk2">spk2</option><option value="spk3">spk3</option>
-      <option value="spk4">spk4</option><option value="center">center</option><option value="lav">lav</option>
-    </select>
+    <input id="label" placeholder="Device name (e.g. spk1, alice, center)" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" maxlength="24">
     <input id="speaker" placeholder="Participant ID (optional)" autocomplete="off" autocapitalize="off">
     <div id="micRow" hidden><select id="mic"><option value="">Default microphone</option></select></div>
     <button class="big" id="arm">Arm microphone</button>
