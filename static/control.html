@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<title>Recording Control</title><link rel="stylesheet" href="/static/app.css">
+</head><body><main>
+<header class="top"><span id="conn" class="dot"></span><h1>Recording</h1><span id="sessName" class="muted grow"></span></header>
+<div id="stale" class="banner" hidden></div>
+<div id="msgs"></div>
+
+<section class="card hero" id="hero">
+  <div id="heroState">…</div>
+  <div id="heroSub" class="muted"></div>
+
+  <div class="setup" id="setup">
+    <input id="name" placeholder="Session name" autocomplete="off" autocapitalize="off">
+    <div class="row">
+      <div class="seg" id="mode"><button data-mode="B" class="on">4 + center</button><button data-mode="A">Lav</button></div>
+      <button class="ghost small" id="notesBtn" style="margin-left:auto">＋ Note</button>
+    </div>
+    <textarea id="notes" rows="2" placeholder="Notes" hidden></textarea>
+  </div>
+
+  <div class="slide" id="slideStart" role="button" tabindex="0" aria-label="Slide to start recording">
+    <span class="label">Slide to start</span><span class="thumb">›</span></div>
+  <div class="slide stop" id="slideStop" role="button" tabindex="0" aria-label="Slide to stop recording" hidden>
+    <span class="label">Slide to stop</span><span class="thumb">›</span></div>
+  <div class="row live" id="live" hidden>
+    <button class="ghost" id="chirpBtn">♪ Chirp</button>
+    <button class="ghost" id="markBtn" title="Tap: add marker. Hold: add marker with a label.">⚑ Marker</button>
+  </div>
+  <button class="ghost small" id="force" style="margin-top:12px" hidden>Force save</button>
+</section>
+
+<section class="card group" id="group" hidden>
+  <div class="row"><span class="grow">Speaker iPads</span>
+    <div class="seg" id="langAll"><button data-lang="ja">日本語</button><button data-lang="en">English</button></div></div>
+  <label class="row"><span class="grow">Participant view</span>
+    <span class="switch"><input type="checkbox" id="pvAll"><i></i></span></label>
+  <div class="row"><span class="grow muted" id="armCount"></span>
+    <button class="ghost small" id="disarmAll">Disarm all</button></div>
+</section>
+
+<section id="devices"></section>
+<p id="empty" class="muted center">No iPads connected yet. Open <b>/record</b> on each iPad.</p>
+</main>
+<script type="module" src="/static/control.js"></script>
+</body></html>

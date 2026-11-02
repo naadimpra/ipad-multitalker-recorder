@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>iPad Recorder</title><link rel="stylesheet" href="/static/app.css">
+</head><body><main>
+<div id="tech">
+  <div id="status">Not armed</div>
+
+  <section class="card" id="setup">
+    <div class="chips" id="posChips"></div>
+    <select id="label" hidden>
+      <option value="spk1">spk1</option><option value="spk2">spk2</option><option value="spk3">spk3</option>
+      <option value="spk4">spk4</option><option value="center">center</option><option value="lav">lav</option>
+    </select>
+    <input id="speaker" placeholder="Participant ID (optional)" autocomplete="off" autocapitalize="off">
+    <div id="micRow" hidden><select id="mic"><option value="">Default microphone</option></select></div>
+    <button class="big" id="arm">Arm microphone</button>
+  </section>
+
+  <section class="card">
+    <div class="meter"><div id="lvl"></div></div>
+    <div class="row" style="margin-top:8px"><span id="info" class="muted grow">–</span><span id="db" class="muted">–</span></div>
+    <p id="quietWarn" class="msg err" style="display:none;margin:10px 0 0">Very quiet — move the iPad closer to the speaker.</p>
+  </section>
+
+  <button class="big ghost" id="toPart">Participant view  ›</button>
+</div>
+
+<div id="pview">
+  <div id="pbar">
+    <button id="pback" class="pback" aria-label="Back">‹</button>
+    <div id="pcenter"><span id="pdot"></span><span id="ptime">0:00</span><span id="pchip"></span></div>
+    <div class="plang" role="group" aria-label="Language">
+      <button data-lang="ja">日本語</button><button data-lang="en">English</button>
+    </div>
+  </div>
+  <div class="pmeter"><div id="plvl"></div></div>
+  <div class="phint" id="phint"></div>
+  <div class="emo-grid" id="emoGrid"></div>
+</div>
+</main>
+<script type="module" src="/static/record.js"></script>
+</body></html>
