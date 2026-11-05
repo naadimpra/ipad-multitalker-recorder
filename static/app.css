@@ -183,3 +183,13 @@ body.lang-en .emo .ja { font-size: var(--sub); font-weight: 600; letter-spacing:
   .emo.on::after { font-size: min(16cqh, 3rem); }
 }
 .dev { touch-action: pan-y; }
+
+/* ---- "mics toward the participant": instruction screen + 180° flip so the UI reads upright ---- */
+#rotate { position: fixed; inset: 0; z-index: 50; background: var(--bg); display: flex; flex-direction: column;
+  align-items: center; justify-content: center; gap: 14px; padding: 24px; text-align: center; }
+#rotate[hidden] { display: none; }
+#rotate svg { width: min(36vw, 34vh); height: auto; color: var(--fg); }
+#rotate h1 { margin: 0; font-size: 1.7rem; }
+#rotate p { margin: 0; max-width: 28em; font-size: 1.1rem; }
+#rotate .big { width: min(320px, 100%); }
+body.flip main { transform: rotate(180deg); min-height: 100vh; min-height: 100dvh; }

@@ -119,6 +119,7 @@ function preflight() {
     if (!d.armed) issues.push(`${l} not armed`);
     else if (d.ctx !== "running") issues.push(`${l} audio ${d.ctx}`);
     else if (d.quiet) issues.push(`${l} quiet`);
+    else if (d.rot_on && !d.rot_ok) issues.push(`${l} not turned`);
   }
   const labels = devs.filter((d) => d.armed).map((d) => d.label);
   for (const l of new Set(labels)) if (labels.filter((x) => x === l).length > 1) issues.push(`duplicate ${l}`);
@@ -174,6 +175,7 @@ $("notesBtn").onclick = () => { const t = $("notes"); t.hidden = !t.hidden; if (
 
 // all speaker iPads
 for (const b of $("langAll").querySelectorAll("button")) b.onclick = () => send({ type: "lang_all", lang: b.dataset.lang });
+$("rotAll").onchange = (e) => send({ type: "rotate_all", on: e.target.checked });
 $("pvAll").onchange = (e) => send({ type: "view_all", participant: e.target.checked });
 $("disarmAll").onclick = () => send({ type: "disarm_all" });
 
@@ -262,6 +264,7 @@ function flagsFor(d, s) {
     if (d.hidden) f.push(["background", "bad"]);
     if (d.armed && d.ctx !== "running") f.push([`audio ${d.ctx}`, "bad"]);
     if (d.armed && d.quiet) f.push(["quiet", "warn"]);
+    if (d.rot_on && !d.rot_ok) f.push(["not turned", "warn"]);
     if (state.build && d.build !== state.build) f.push(["old page", "bad"]);
     if (d.problem) f.push(["error", "bad"]);
     if (s && d.armed && !s.members.includes(d.label)) f.push(["not in session", "warn"]);
@@ -373,6 +376,7 @@ function render() {
   $("group").hidden = !spk.length;
   if (spk.length) {
     $("pvAll").checked = spk.every((d) => d.participant);
+    $("rotAll").checked = !!state.rotate;
     const armedN = spk.filter((d) => d.armed).length;
     $("armCount").textContent = `${armedN} of ${spk.length} armed`;
     $("disarmAll").hidden = armedN === 0;

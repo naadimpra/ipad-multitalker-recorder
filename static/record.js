@@ -84,6 +84,7 @@ function handle(m) {
       if (m.speaker != null) { $("speaker").value = m.speaker; store.set("speaker", m.speaker); }
       break;
     case "view": setParticipant(!!m.participant); break;
+    case "rotate": rotOn = !!m.on; rotEpoch = m.epoch || 0; applyRotate(); break;
     case "disarm": disarm(); break;
     case "lang": setLang(m.lang); break;
     case "identify":
@@ -207,6 +208,21 @@ function hideReview() {
   a.addEventListener("play", () => { try { if (as) as.type = "playback"; } catch {} });
   for (const ev of ["pause", "ended"]) a.addEventListener(ev, () => { try { if (as && armed) as.type = "play-and-record"; } catch {} });
 }
+
+// ---- "mics toward participant": instruction screen, then flip the UI 180° so it reads upright ----
+let rotOn = false, rotEpoch = 0;
+const rotSpeaker = () => !["center", "lav"].includes($("label").value);
+const rotAcked = () => store.get("rotAck") === String(rotEpoch);
+function applyRotate() {
+  const active = rotOn && rotSpeaker();
+  const recording = !!rec && !rec.stopped;
+  $("rotate").hidden = !(active && !rotAcked() && !recording);
+  const flip = active && rotAcked() && store.get("flipOff") !== "1";
+  document.body.classList.toggle("flip", flip);
+  $("flipBtn").hidden = !(active && rotAcked());
+}
+$("rotDone").onclick = () => { store.set("rotAck", String(rotEpoch)); store.set("flipOff", ""); applyRotate(); };
+$("flipBtn").onclick = () => { store.set("flipOff", store.get("flipOff") === "1" ? "" : "1"); applyRotate(); };
 
 function checkFinished() {
   if (!rec || !rec.stopped || rec.finishedSent || queue.size > 0) return;
@@ -487,10 +503,11 @@ setInterval(() => {
     ws.send(JSON.stringify({
       type: "status", ...describe(), ctx: ctx ? ctx.state : null, hidden: document.hidden,
       level_db: db, peak_db: pdb, rtt_ms: clock.rtt, offset_ms: clock.offset,
-      backlog_s: backlogS, quiet, emotion, recording, sid: rec ? rec.sid : null, problem,
+      rot_on: rotOn && rotSpeaker(), rot_ok: rotAcked(), backlog_s: backlogS, quiet, emotion, recording, sid: rec ? rec.sid : null, problem,
     }));
   }
   level = { rms: 0, peak: 0 };
+  applyRotate();
 }, 250);
 
 setInterval(() => clock.ping(ws), 2000);

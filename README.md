@@ -60,6 +60,10 @@ Safari only allows the microphone over trusted HTTPS, so each device must trust 
    - **Tap a device row** to expand it: device name, participant ID, label language, participant view,
      Identify (flashes that iPad's screen). A coloured dot and a few flags show its state; a flag only
      appears when something is wrong.
+   - **Mics toward participant** (Speaker iPads card) is optional. The iPad's microphone is on its top edge, so with
+     it on, every speaker iPad shows "Turn your iPad around" until the participant taps **Done**. The screen
+     then flips 180° so it reads upright with the mic edge facing them. The admin page shows "not turned" for
+     iPads that haven't confirmed, and a **Flip screen** button on the iPad undoes the flip if it looks wrong.
    - **Disarm** (in the expanded row, or **Disarm all** in the Speaker iPads card) releases an iPad's microphone
      between sessions. It is disabled while recording.
    - **Swipe an offline device left** to remove it (or use Remove in its expanded row).

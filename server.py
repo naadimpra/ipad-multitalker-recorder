@@ -88,6 +88,8 @@ class Hub:
         self.admins: set[WebSocket] = set()
         self.session: dict | None = None       # active session
         self.last_session: str | None = None
+        self.rotate = False        # "mics toward the participant" guide for speaker iPads
+        self.rotate_epoch = 0      # bumps each time it is switched on, so devices ask again
         self.lock = asyncio.Lock()
 
     # ---------- state ----------
@@ -109,7 +111,7 @@ class Hub:
             }
         return {"type": "state", "server_ms": now_ms(), "devices": self.public_devices(),
                 "session": sess, "last_session": self.last_session,
-                "build": static_build(), "update": UPDATE if UPDATE["available"] else None, "server_stale": server_src_hash() != SERVER_BOOT_HASH}
+                "rotate": self.rotate, "build": static_build(), "update": UPDATE if UPDATE["available"] else None, "server_stale": server_src_hash() != SERVER_BOOT_HASH}
 
     async def to_admins(self, msg: dict) -> None:
         dead = []
@@ -368,6 +370,7 @@ async def ws_endpoint(ws: WebSocket):
                     did = m["id"]
                     old = hub.devices.get(did, {})
                     m["label"] = clean_label(m.get("label")) or "device"
+                    await ws.send_text(json.dumps({"type": "rotate", "on": hub.rotate, "epoch": hub.rotate_epoch}))
                     hub.devices[did] = old | {k: v for k, v in m.items() if k not in ("type", "role", "id")} \
                         | {"ws": ws, "online": True}
                     s = hub.session
@@ -430,6 +433,14 @@ async def ws_endpoint(ws: WebSocket):
                     for vid, vd in list(hub.devices.items()):
                         if vd.get("ws") and is_speaker(vd.get("label")):
                             await hub.to_device(vid, {"type": "disarm"})
+                elif t == "rotate_all":
+                    on = bool(m.get("on"))
+                    if on and not hub.rotate:
+                        hub.rotate_epoch += 1
+                    hub.rotate = on
+                    for vid, vd in list(hub.devices.items()):
+                        if vd.get("ws"):
+                            await hub.to_device(vid, {"type": "rotate", "on": on, "epoch": hub.rotate_epoch})
                 elif t == "view_all":
                     for vid, vd in list(hub.devices.items()):
                         if vd.get("ws") and is_speaker(vd.get("label")):
