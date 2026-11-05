@@ -84,7 +84,7 @@ function handle(m) {
       if (m.speaker != null) { $("speaker").value = m.speaker; store.set("speaker", m.speaker); }
       break;
     case "view": setParticipant(!!m.participant); break;
-    case "rotate": rotOn = !!m.on; rotEpoch = m.epoch || 0; applyRotate(); break;
+    case "rotate": if (m.epoch !== rotEpoch || !m.on) rotReset(); rotOn = !!m.on; rotEpoch = m.epoch || 0; applyRotate(); break;
     case "disarm": disarm(); break;
     case "lang": setLang(m.lang); break;
     case "identify":
@@ -209,20 +209,129 @@ function hideReview() {
   for (const ev of ["pause", "ended"]) a.addEventListener(ev, () => { try { if (as && armed) as.type = "play-and-record"; } catch {} });
 }
 
-// ---- "mics toward participant": instruction screen, then flip the UI 180° so it reads upright ----
+// ---- "mics toward participant": track the physical turn, tick when it is ~180°, then flip the UI ----
+// Flat on a table the only sensor is the compass; held upright iOS also rotates the screen, which we
+// compare against. If neither works the participant turns it by hand and taps Done.
 let rotOn = false, rotEpoch = 0;
+const rs = { phase: "start", base: null, offset: 0, heading: null, delta: 0, near: 0, ok: false, tickUntil: 0, waitUntil: 0, listening: false };
 const rotSpeaker = () => !["center", "lav"].includes($("label").value);
-const rotAcked = () => store.get("rotAck") === String(rotEpoch);
+const norm = (d) => ((d % 360) + 360) % 360;
+// How far iPadOS has auto-rotated the page. The compass works in the iPad's own frame (top edge = mic),
+// but the page turns with auto-rotate, so the mic sits at the top, a side or the bottom of the page.
+const screenAngle = () => (typeof window.orientation === "number" ? window.orientation : screen.orientation ? screen.orientation.angle : 0) || 0;
+const micOnScreen = () => norm(-screenAngle());   // clockwise from the page's top
+const dist180 = (d) => Math.abs(norm(d) - 180);   // how far a turn of d degrees is from a half turn
+
+function onOrient(e) {
+  const h = typeof e.webkitCompassHeading === "number" ? e.webkitCompassHeading : e.alpha != null ? norm(360 - e.alpha) : null;
+  if (h == null || Number.isNaN(h)) return;
+  rs.heading = rs.heading == null ? h : norm(rs.heading + 0.35 * (((h - rs.heading + 540) % 360) - 180));
+}
+function rotReset() { Object.assign(rs, { phase: "start", base: null, offset: 0, heading: null, delta: 0, near: 0, ok: false, tickUntil: 0 }); }
+
+// Starts by itself. iOS asks for motion access only after a touch, so if the automatic request is
+// refused the overlay pulses and the first tap anywhere on it grants access.
+async function rotBegin() {
+  rs.phase = "wait"; rs.waitUntil = Infinity;   // the clock starts once access is granted
+  try {
+    if (typeof DeviceOrientationEvent !== "undefined" && DeviceOrientationEvent.requestPermission) {
+      if ((await DeviceOrientationEvent.requestPermission()) !== "granted") throw new Error("denied");
+    }
+    if (!rs.listening) { window.addEventListener("deviceorientation", onOrient); rs.listening = true; }
+    rs.heading = null; rs.waitUntil = Date.now() + 2500;
+  } catch (err) { rs.phase = err && err.name === "NotAllowedError" ? "tap" : "manual"; }
+  applyRotate();
+}
+$("rotate").addEventListener("pointerdown", () => { if (rs.phase === "tap") rotBegin(); });
+$("rotAlready").onclick = () => { rs.offset = norm(rs.offset + 180 - rs.delta); applyRotate(); };
+$("rotDone").onclick = () => { rs.ok = true; rs.tickUntil = Date.now() + 1500; store.set("flipOff", ""); applyRotate(); };
+$("flipBtn").onclick = () => { store.set("flipOff", store.get("flipOff") === "1" ? "" : "1"); applyRotate(); };
+
+// Find-my style guide. The dial, the "you" marker and the text counter-rotate by the measured turn, so
+// they stay fixed on the table and readable for the participant; the mic marker is attached to the iPad's
+// top edge and visibly travels round the dial toward them. The big number is the turn still needed.
+let rotDisp = 0, rotRaf = 0;
+{
+  const g = $("rotTicks"), NS = "http://www.w3.org/2000/svg";
+  for (let a = 0; a < 360; a += 5) {
+    const major = a % 45 === 0, r0 = major ? 98 : 102, r1 = 110, s = Math.sin(a * Math.PI / 180), c = -Math.cos(a * Math.PI / 180);
+    const l = document.createElementNS(NS, "line");
+    l.setAttribute("x1", r0 * s); l.setAttribute("y1", r0 * c); l.setAttribute("x2", r1 * s); l.setAttribute("y2", r1 * c);
+    if (major) l.setAttribute("class", "major");
+    g.append(l);
+  }
+}
+const ROT_R = 128;
+const rotPt = (a) => [ROT_R * Math.sin(a * Math.PI / 180), -ROT_R * Math.cos(a * Math.PI / 180)];
+const lerp = (x, y, p) => Math.round(x + (y - x) * p);
+function rotFrame() {
+  const el = $("rotate");
+  if (el.hidden) { rotRaf = 0; return; }
+  const st = el.dataset.state;
+  const target = st === "track" ? rs.delta : st === "ok" ? 180 : 0;
+  rotDisp += ((((target - rotDisp) % 360) + 540) % 360 - 180) * 0.14;   // ease, the short way round
+  const a = norm(rotDisp);
+  const cw = a <= 180, left = cw ? 180 - a : a - 180;                      // turn still needed
+  const prox = st === "ok" ? 1 : Math.max(0, 1 - left / 70);
+  // not eased: iPadOS animates its own auto-rotation, and the drawing must stay put on the table through it
+  $("rotWorld").setAttribute("transform", `rotate(${(micOnScreen() - rotDisp).toFixed(2)})`);
+  $("rotMicArm").setAttribute("transform", `rotate(${rotDisp.toFixed(2)})`);
+  // arc from the mic to the participant, in the direction to keep turning
+  const away = 26 / ROT_R * 180 / Math.PI;                                   // stop short of both markers
+  const a0 = cw ? a + away : a - away, a1 = cw ? 180 - away : 180 + away;
+  const span = cw ? a1 - a0 : a0 - a1;
+  if (span > 2) {
+    const [x0, y0] = rotPt(a0), [x1, y1] = rotPt(a1);
+    $("rotArc").setAttribute("d", `M${x0.toFixed(1)} ${y0.toFixed(1)}A${ROT_R} ${ROT_R} 0 ${span > 180 ? 1 : 0} ${cw ? 1 : 0} ${x1.toFixed(1)} ${y1.toFixed(1)}`);
+  } else $("rotArc").setAttribute("d", "");
+  $("rotArc").setAttribute("stroke", `rgb(${lerp(255, 48, prox)},${lerp(255, 209, prox)},${lerp(255, 88, prox)})`);
+  $("rotDeg").textContent = `${Math.round(left)}°`;
+  $("rotLbl").setAttribute("y", st === "ok" ? 92 : 56);   // under the ✓ once it is done
+  $("rotLbl").textContent =
+    st === "ok" ? "Mic is facing you" :
+    st === "tap" ? "Tap the screen to start" :
+    st === "manual" ? "Turn it around, then tap ✓" :
+    st !== "track" || left > 170 ? "Turn your iPad around" :
+    left <= 25 ? "Almost there" : cw ? "Keep turning clockwise ↻" : "Keep turning anticlockwise ↺";
+  el.style.background = st === "ok" ? "#1f9d55" : `rgb(${lerp(11, 20, prox)},${lerp(13, 83, prox)},${lerp(16, 45, prox)})`;
+  rotRaf = requestAnimationFrame(rotFrame);
+}
 function applyRotate() {
   const active = rotOn && rotSpeaker();
   const recording = !!rec && !rec.stopped;
-  $("rotate").hidden = !(active && !rotAcked() && !recording);
-  const flip = active && rotAcked() && store.get("flipOff") !== "1";
-  document.body.classList.toggle("flip", flip);
-  $("flipBtn").hidden = !(active && rotAcked());
+  const now = Date.now();
+  if (!active) { rotReset(); }
+  else if (rs.phase === "wait") {
+    if (rs.heading != null) {
+      // Where does the iPad start? Assume the participant reads the page upright (auto-rotate follows how
+      // they picked it up), i.e. they sit at the page's bottom. If the page is upside-down the mic already
+      // faces them; sideways means a quarter turn is left. "Already facing me" corrects a wrong guess.
+      rs.base = rs.heading; rs.offset = Math.round(micOnScreen() / 90) % 4 * 90; rs.phase = "track";
+    }
+    else if (now > rs.waitUntil) rs.phase = "manual";
+  } else if (rs.phase === "track") {
+    rs.delta = norm(rs.heading - rs.base + rs.offset);   // physical turn (compass ignores auto-rotate)
+    const d = dist180(rs.delta);
+    if (d <= 25) { rs.near ||= now; if (!rs.ok && now - rs.near >= 700) { rs.ok = true; rs.tickUntil = now + 1500; } }
+    else { rs.near = 0; if (d > 40) rs.ok = false; }
+  }
+  if (active && !recording && rs.phase === "start") rotBegin();
+  const showTick = active && rs.ok && now < rs.tickUntil;
+  const el = $("rotate");
+  el.hidden = !(active && !recording && (!rs.ok || showTick));
+  const state = showTick ? "ok" : rs.phase;
+  el.dataset.state = state;
+  if (!el.hidden && !rotRaf) rotRaf = requestAnimationFrame(rotFrame);
+  // Upright for the participant = page turned by (mic position - physical turn), in quarter turns.
+  // Auto-rotate may already have done it (0); otherwise flip (2) or turn the page sideways (1 / 3).
+  const turn = rs.phase === "track" ? rs.delta : 180;
+  const need = active && rs.ok && store.get("flipOff") !== "1" ? Math.round(norm(micOnScreen() - turn) / 90) % 4 : 0;
+  document.body.classList.toggle("flip", need === 2);
+  document.body.classList.toggle("rot90", need === 1);
+  document.body.classList.toggle("rot270", need === 3);
+  $("flipBtn").hidden = !(active && rs.ok);
 }
-$("rotDone").onclick = () => { store.set("rotAck", String(rotEpoch)); store.set("flipOff", ""); applyRotate(); };
-$("flipBtn").onclick = () => { store.set("flipOff", store.get("flipOff") === "1" ? "" : "1"); applyRotate(); };
+window.addEventListener("orientationchange", applyRotate);
 
 function checkFinished() {
   if (!rec || !rec.stopped || rec.finishedSent || queue.size > 0) return;
@@ -503,7 +612,7 @@ setInterval(() => {
     ws.send(JSON.stringify({
       type: "status", ...describe(), ctx: ctx ? ctx.state : null, hidden: document.hidden,
       level_db: db, peak_db: pdb, rtt_ms: clock.rtt, offset_ms: clock.offset,
-      rot_on: rotOn && rotSpeaker(), rot_ok: rotAcked(), backlog_s: backlogS, quiet, emotion, recording, sid: rec ? rec.sid : null, problem,
+      rot_on: rotOn && rotSpeaker(), rot_ok: rs.ok, rot_deg: rs.phase === "track" ? Math.round(rs.delta) : null, backlog_s: backlogS, quiet, emotion, recording, sid: rec ? rec.sid : null, problem,
     }));
   }
   level = { rms: 0, peak: 0 };

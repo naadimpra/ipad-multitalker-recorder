@@ -5,19 +5,6 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <title>iPad Recorder</title><link rel="stylesheet" href="/static/app.css">
 </head><body><main>
-<div id="rotate" hidden>
-  <svg viewBox="0 0 200 250" aria-hidden="true">
-    <circle cx="100" cy="26" r="14" fill="currentColor" opacity=".85"/>
-    <path d="M70 62a30 24 0 0 1 60 0z" fill="currentColor" opacity=".85"/>
-    <rect x="52" y="86" width="96" height="150" rx="12" fill="none" stroke="currentColor" stroke-width="5"/>
-    <rect x="52" y="86" width="96" height="9" rx="4" fill="var(--accent)"/>
-    <circle cx="80" cy="91" r="2.6" fill="#fff"/><circle cx="120" cy="91" r="2.6" fill="#fff"/>
-    <path d="M100 74v-6M92 74l8 8 8-8" stroke="var(--accent)" stroke-width="4" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
-  </svg>
-  <h1>Turn your iPad around</h1>
-  <p>Put the <b>top edge</b> (with the microphone) <b>toward you</b>, about 30–50 cm away. The screen will flip to match.</p>
-  <button class="big" id="rotDone">Done</button>
-</div>
 
 <div id="tech">
   <div id="status">Not armed</div>
@@ -58,5 +45,35 @@
   <div class="emo-grid" id="emoGrid"></div>
 </div>
 </main>
+<div id="rotate" hidden data-state="start" role="status" aria-live="polite">
+  <svg id="rotSvg" viewBox="-160 -160 320 320">
+    <defs>
+      <marker id="rotHead" viewBox="0 0 10 10" refX="5" refY="5" markerWidth="4" markerHeight="4" orient="auto-start-reverse">
+        <path d="M1 1L9 5L1 9z" fill="context-stroke"/>
+      </marker>
+    </defs>
+    <!-- everything in rotWorld counter-rotates, so it stays put on the table (and readable) while the iPad turns -->
+    <g id="rotWorld">
+      <g id="rotTicks"></g>
+      <path id="rotArc" fill="none" stroke-width="7" stroke-linecap="round" marker-end="url(#rotHead)"/>
+      <g id="rotYou" transform="translate(0 128)">
+        <circle r="20" fill="#fff"/>
+        <circle cy="-5" r="6" fill="#0b0d10"/><path d="M-11 12a11 9 0 0 1 22 0z" fill="#0b0d10"/>
+      </g>
+      <g id="rotRip" fill="none" stroke="#fff" stroke-width="3"><circle r="60"/><circle r="60"/><circle r="60"/></g>
+      <text id="rotDeg" y="18" text-anchor="middle">180°</text>
+      <text id="rotLbl" y="56" text-anchor="middle">Turn your iPad around</text>
+      <g id="rotTick"><circle r="54" fill="#fff"/><path d="M-24 1l16 16 32-34" fill="none" stroke="#1f9d55" stroke-width="11" stroke-linecap="round" stroke-linejoin="round"/></g>
+      <!-- the mic is fixed to the iPad's top edge, so it turns with the iPad: rotated back by the turn -->
+      <g id="rotMicArm"><g transform="translate(0 -128)">
+        <circle r="22" fill="#0a84ff"/>
+        <rect x="-6" y="-13" width="12" height="18" rx="6" fill="#fff"/>
+        <path d="M-11 -1a11 11 0 0 0 22 0M0 10v5" fill="none" stroke="#fff" stroke-width="3.5" stroke-linecap="round"/>
+      </g></g>
+    </g>
+  </svg>
+  <button id="rotAlready">Mic already faces me</button>
+  <button id="rotDone" aria-label="Done"><svg viewBox="0 0 24 24"><path d="M5 12.500l4.500 4.500L19 7" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+</div>
 <script type="module" src="/static/record.js"></script>
 </body></html>

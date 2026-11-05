@@ -93,7 +93,7 @@ input, select, textarea { font: inherit; padding: 11px 12px; border-radius: 10px
 .devmeter { width: 70px; flex: none; } .devmeter .meter { height: 8px; }
 .devflags { margin-left: auto; display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; align-items: center; }
 .flag { font-size: .72rem; font-weight: 700; padding: 3px 8px; border-radius: 99px; background: var(--soft); color: var(--muted); white-space: nowrap; }
-.flag.bad { background: var(--bad); color: #fff; } .flag.warn { background: var(--warn); color: #fff; }
+.flag.bad { background: var(--bad); color: #fff; } .flag.warn { background: var(--warn); color: #fff; } .flag.ok { background: var(--ok); color: #fff; }
 .emoji { font-size: 1.3rem; }
 .chev { color: var(--muted); transition: transform .15s; font-size: 1.3rem; }
 .dev.open .chev { transform: rotate(90deg); }
@@ -184,12 +184,36 @@ body.lang-en .emo .ja { font-size: var(--sub); font-weight: 600; letter-spacing:
 }
 .dev { touch-action: pan-y; }
 
-/* ---- "mics toward the participant": instruction screen + 180° flip so the UI reads upright ---- */
-#rotate { position: fixed; inset: 0; z-index: 50; background: var(--bg); display: flex; flex-direction: column;
-  align-items: center; justify-content: center; gap: 14px; padding: 24px; text-align: center; }
+/* ---- "mics toward the participant": find-my style turn guide + 180° flip so the UI reads upright ---- */
+#rotate { position: fixed; inset: 0; z-index: 50; background: #0b0d10; color: #fff; display: flex; flex-direction: column;
+  align-items: center; justify-content: center; gap: 16px; padding: 16px; }
 #rotate[hidden] { display: none; }
-#rotate svg { width: min(36vw, 34vh); height: auto; color: var(--fg); }
-#rotate h1 { margin: 0; font-size: 1.7rem; }
-#rotate p { margin: 0; max-width: 28em; font-size: 1.1rem; }
-#rotate .big { width: min(320px, 100%); }
+#rotSvg { width: min(92vw, 80vh); height: auto; overflow: visible; }
+#rotTicks line { stroke: #fff; stroke-opacity: .28; stroke-width: 2; stroke-linecap: round; }
+#rotTicks line.major { stroke-opacity: .6; stroke-width: 3; }
+#rotDeg { font: 700 76px/1 -apple-system, system-ui, sans-serif; fill: #fff; letter-spacing: -2px; font-variant-numeric: tabular-nums; }
+#rotLbl { font: 600 17px -apple-system, system-ui, sans-serif; fill: #fff; fill-opacity: .75; }
+#rotArc { stroke-dasharray: 2 14; animation: rotMarch .6s linear infinite; }
+#rotTick, #rotRip { display: none; }
+#rotate[data-state="ok"] #rotTick { display: block; animation: rotPop .5s cubic-bezier(.2,1.5,.4,1); transform-box: fill-box; transform-origin: center; }
+#rotate[data-state="ok"] #rotRip, #rotate[data-state="tap"] #rotRip { display: block; }
+#rotate[data-state="ok"] #rotDeg, #rotate[data-state="ok"] #rotArc, #rotate[data-state="ok"] #rotMicArm { display: none; }
+#rotate[data-state="ok"] #rotLbl { fill-opacity: 1; font-size: 20px; }
+#rotRip circle { transform-box: fill-box; transform-origin: center; animation: rotRipple 1.8s ease-out infinite; }
+#rotRip circle:nth-child(2) { animation-delay: .6s; } #rotRip circle:nth-child(3) { animation-delay: 1.2s; }
+#rotDone { display: none; width: 76px; height: 76px; border-radius: 50%; background: #fff; color: #1f9d55; padding: 0; }
+#rotDone svg { width: 38px; height: 38px; }
+#rotate[data-state="manual"] #rotDone { display: inline-flex; align-items: center; justify-content: center; }
+#rotAlready { display: none; background: rgba(255,255,255,.12); color: #fff; border-radius: 99px; padding: 10px 18px; font-weight: 600; }
+#rotate[data-state="track"] #rotAlready { display: inline-block; }
 body.flip main { transform: rotate(180deg); min-height: 100vh; min-height: 100dvh; }
+/* sideways: lay the page out in the swapped viewport, then turn it a quarter */
+body.rot90 main, body.rot270 main { position: fixed; top: 50%; left: 50%; width: 100vh; width: 100dvh; height: 100vw;
+  max-width: none; overflow: auto; box-sizing: border-box; }
+body.rot90 main { transform: translate(-50%, -50%) rotate(90deg); }
+body.rot270 main { transform: translate(-50%, -50%) rotate(-90deg); }
+body.rot90:not(.participant) main > *, body.rot270:not(.participant) main > * { max-width: 560px; margin-left: auto; margin-right: auto; }
+body.rot90.participant #pview, body.rot270.participant #pview { height: 100vw; }
+@keyframes rotMarch { to { stroke-dashoffset: -16; } }
+@keyframes rotPop { from { transform: scale(.3); opacity: 0; } }
+@keyframes rotRipple { from { transform: scale(1); opacity: .7; } to { transform: scale(2.6); opacity: 0; } }

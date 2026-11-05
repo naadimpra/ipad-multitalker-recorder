@@ -264,7 +264,7 @@ function flagsFor(d, s) {
     if (d.hidden) f.push(["background", "bad"]);
     if (d.armed && d.ctx !== "running") f.push([`audio ${d.ctx}`, "bad"]);
     if (d.armed && d.quiet) f.push(["quiet", "warn"]);
-    if (d.rot_on && !d.rot_ok) f.push(["not turned", "warn"]);
+    if (d.rot_on) f.push(d.rot_ok ? ["✓ turned", "ok"] : ["not turned", "warn"]);
     if (state.build && d.build !== state.build) f.push(["old page", "bad"]);
     if (d.problem) f.push(["error", "bad"]);
     if (s && d.armed && !s.members.includes(d.label)) f.push(["not in session", "warn"]);
