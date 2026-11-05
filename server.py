@@ -20,7 +20,7 @@ from datetime import datetime
 from pathlib import Path
 
 import uvicorn
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 
@@ -201,6 +201,8 @@ class Hub:
                                 dev["sample_rate"], dev["channels"])
         s["finished"].add(did)
         self._save_meta()
+        await self.to_device(did, {"type": "saved", "sid": sid, "file": dev["wav_file"], "frames": frames,
+                                   "sr": dev["sample_rate"]})
         if s["finished"] == set(s["members"]):
             await self._close()
 
@@ -268,6 +270,17 @@ async def no_cache(request, call_next):
     resp = await call_next(request)
     resp.headers["Cache-Control"] = "no-cache"
     return resp
+
+
+@app.get("/take/{sid}/{name}")
+async def take(sid: str, name: str):
+    """Serve a finished take so the iPad can play back what the server actually saved (supports Range)."""
+    if not re.fullmatch(r"[A-Za-z0-9_-]+", sid) or not re.fullmatch(r"[A-Za-z0-9_-]+\.wav", name):
+        raise HTTPException(404)
+    f = REC_DIR / sid / name
+    if not f.is_file():
+        raise HTTPException(404)
+    return FileResponse(f, media_type="audio/wav")
 
 
 @app.get("/")

@@ -68,7 +68,8 @@ function handle(m) {
   switch (m.type) {
     case "pong": clock.onPong(m); break;
     case "ack": queue.delete(m.seq); checkFinished(); break;
-    case "start": startRec(m.sid); break;
+    case "saved": if (rec && rec.sid === m.sid) showReview(m); break;
+    case "start": hideReview(); startRec(m.sid); break;
     case "stop": if (rec && rec.sid === m.sid) stopRec(); break;
     case "resume":
       if (rec && rec.sid === m.sid) {
@@ -188,6 +189,24 @@ function setLang(l) {
 for (const b of document.querySelectorAll(".plang button")) b.addEventListener("click", () => setLang(b.dataset.lang));
 setLang(lang);
 if (new URLSearchParams(location.search).get("view") === "participant") setParticipant(true);
+
+// Play back the take as the server saved it (so it also proves the upload is intact).
+function showReview(m) {
+  $("revAudio").src = `/take/${encodeURIComponent(m.sid)}/${encodeURIComponent(m.file)}`;
+  $("revInfo").textContent = `${fmt(m.frames / (m.sr || sampleRate || 48000))} · saved on server`;
+  $("review").hidden = false;
+}
+function hideReview() {
+  const a = $("revAudio");
+  a.pause(); a.removeAttribute("src"); a.load();
+  $("review").hidden = true;
+}
+{
+  // capture needs "play-and-record"; the output route is steadier in "playback" while listening
+  const a = $("revAudio"), as = navigator.audioSession;
+  a.addEventListener("play", () => { try { if (as) as.type = "playback"; } catch {} });
+  for (const ev of ["pause", "ended"]) a.addEventListener(ev, () => { try { if (as && armed) as.type = "play-and-record"; } catch {} });
+}
 
 function checkFinished() {
   if (!rec || !rec.stopped || rec.finishedSent || queue.size > 0) return;
