@@ -16,6 +16,7 @@ import socket
 import struct
 import subprocess
 import time
+import urllib.request
 from datetime import datetime
 from pathlib import Path
 
@@ -108,7 +109,7 @@ class Hub:
             }
         return {"type": "state", "server_ms": now_ms(), "devices": self.public_devices(),
                 "session": sess, "last_session": self.last_session,
-                "build": static_build(), "server_stale": server_src_hash() != SERVER_BOOT_HASH}
+                "build": static_build(), "update": UPDATE if UPDATE["available"] else None, "server_stale": server_src_hash() != SERVER_BOOT_HASH}
 
     async def to_admins(self, msg: dict) -> None:
         dead = []
@@ -252,6 +253,46 @@ class Hub:
 
 
 hub = Hub()
+
+# ---------------- update check ----------------
+# Asks GitHub (public API, nothing about you is sent) whether the repo's main branch is ahead of the
+# commit this server is running. Only works for a git checkout (git clone), not a downloaded zip.
+UPDATE = {"available": False, "behind": 0, "latest": "", "url": "", "checked": 0}
+
+
+def git_head() -> str:
+    try:
+        r = subprocess.run(["git", "rev-parse", "HEAD"], cwd=ROOT, capture_output=True, text=True, timeout=5)
+        return r.stdout.strip() if r.returncode == 0 else ""
+    except Exception:
+        return ""
+
+
+def _check_update_blocking(repo: str, branch: str) -> None:
+    head = git_head()
+    if not head:
+        return
+    req = urllib.request.Request(f"https://api.github.com/repos/{repo}/compare/{head}...{branch}",
+                                 headers={"Accept": "application/vnd.github+json", "User-Agent": "recorder-update-check"})
+    try:
+        with urllib.request.urlopen(req, timeout=10) as r:
+            j = json.load(r)
+    except Exception:
+        return  # offline, rate-limited, or this commit isn't on GitHub (local-only work): stay quiet
+    behind = j.get("ahead_by", 0) if j.get("status") in ("ahead", "diverged") else 0
+    was = UPDATE["available"]
+    UPDATE.update(available=behind > 0, behind=behind, checked=now_ms(),
+                  latest=((j.get("commits") or [{}])[-1].get("commit", {}).get("message", "") or "").split("\n")[0],
+                  url=f"https://github.com/{repo}")
+    if behind > 0 and not was:
+        print(f"\n  ⬆ Update available: {behind} new commit{'s' if behind != 1 else ''} on {UPDATE['url']}"
+              f"\n    \"{UPDATE['latest']}\"\n    Update with:  git pull   then restart this server.\n")
+
+
+async def update_checker(repo: str, branch: str) -> None:
+    while True:
+        await asyncio.to_thread(_check_update_blocking, repo, branch)
+        await asyncio.sleep(6 * 3600)
 
 
 def clean_label(s) -> str:
@@ -418,6 +459,8 @@ async def state_pusher():
 @app.on_event("startup")
 async def _startup():
     asyncio.create_task(state_pusher())
+    if not ARGS.no_update_check:
+        asyncio.create_task(update_checker(ARGS.repo, ARGS.branch))
 
 
 # ---------------- CA helper (plain HTTP) ----------------
@@ -492,5 +535,8 @@ if __name__ == "__main__":
     ap.add_argument("--port", type=int, default=8443)
     ap.add_argument("--http-port", type=int, default=8080)
     ap.add_argument("--out", type=Path, default=REC_DIR, help="folder for recordings")
+    ap.add_argument("--repo", default="naadimpra/ipad-multitalker-recorder", help="GitHub owner/name to check for updates")
+    ap.add_argument("--branch", default="main")
+    ap.add_argument("--no-update-check", action="store_true", help="never contact GitHub")
     ARGS = ap.parse_args()
     asyncio.run(main())

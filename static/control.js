@@ -325,6 +325,9 @@ function render() {
   const warn = staleWarnings();
   $("stale").hidden = !warn.length;
   $("stale").textContent = warn.join("  ");
+  const u = state.update;
+  $("update").hidden = !u;
+  if (u) $("update").textContent = `Update available: ${u.behind} new commit${u.behind === 1 ? "" : "s"}${u.latest ? ` — “${u.latest}”` : ""}. On the server run git pull, then restart it.`;
   $("conn").className = `dot ${ws.readyState === 1 ? "ok" : "bad"}`;
 
   const s = state.session;

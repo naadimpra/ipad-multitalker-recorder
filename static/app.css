@@ -58,6 +58,7 @@ input, select, textarea { font: inherit; padding: 11px 12px; border-radius: 10px
 #msgs { position: fixed; top: 10px; left: 50%; transform: translateX(-50%); width: min(520px, calc(100% - 24px));
   z-index: 50; display: flex; flex-direction: column; gap: 8px; pointer-events: none; }
 .banner { background: var(--warn); color: #fff; padding: 10px 14px; border-radius: 12px; margin-bottom: 12px; font-weight: 600; font-size: .9rem; }
+.banner.info { background: var(--accent); }
 .hero { text-align: center; transition: box-shadow .2s, border-color .2s; }
 .hero.rec { border-color: var(--rec); box-shadow: 0 0 0 3px rgba(220,38,38,.3); }
 #heroState { font-size: 2.6rem; font-weight: 800; font-variant-numeric: tabular-nums; line-height: 1.1; }

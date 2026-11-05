@@ -79,6 +79,14 @@ Each device needs a unique name when a session starts; any number of armed devic
 Each session is saved in `recordings/<date>_<name>/`: one WAV per device plus `session.json` (devices,
 participant IDs, chirp and marker times, interruptions, labels).
 
+## Updates
+
+If you installed with `git clone`, the server checks GitHub every 6 hours for new commits on `main`. When there
+are any, it prints a notice in the terminal and shows a banner on the admin page. Update with `git pull` and
+restart the server. It only reads the public GitHub API and sends nothing about your setup. Use
+`--no-update-check` to turn it off, or `--repo owner/name --branch name` if you run a fork. A downloaded zip
+(no `.git` folder) can't check for updates.
+
 ## Participant view and labels (optional)
 
 Each speaker iPad can switch to a **participant view**: a simple screen with eight emotion buttons (Neutral,
