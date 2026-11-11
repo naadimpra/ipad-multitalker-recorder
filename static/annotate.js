@@ -802,7 +802,9 @@ async function draftReading(id, from, prev, force = false) {
         if (key === "kana") setKana(s, value); else s[key] = value;
         any = true;
         const ta = fieldEl(id, key), row = rowOf(id);
-        if (ta) { ta.value = value; grow(ta); check(ta.parentElement, key, value); }
+        // the cursor may already be in this line (Tab from the text arrives before the draft does):
+        // the draft is then what later edits are compared with
+        if (ta) { ta.value = value; ta._prev = value; grow(ta); check(ta.parentElement, key, value); }
         if (key === "kana" && row) renderPitch(row, s);
       };
       if (from === "text") put("kana", r.kana, r.prev_kana);
