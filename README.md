@@ -12,6 +12,8 @@ your own machine.
   to the sample and each iPad's clock drift is corrected.
 - **Optional labels**: a distraction-free participant screen where people tap an emotion while they speak.
 - **Tools**: align and merge tracks, draft speech and overlap regions, attach labels to speech segments.
+- **Transcribe**: a browser page with a playable waveform per speaker, where you type what was said in
+  three scripts (漢字, よみがな, romaji) and mark the pitch accent of every mora.
 
 | Mode | Hardware | Output |
 |---|---|---|
@@ -135,12 +137,74 @@ Labels are saved per device in `session.json` as an emotion plus an audio frame 
 If the server crashed mid-session, rebuild the WAVs from the raw files with
 `python -m tools.common recordings/<session>`.
 
+## Transcribing
+
+```bash
+.venv/bin/python -m tools.annotate recordings/<session>   # or just `-m tools.annotate` to pick a session
+```
+
+This opens `http://127.0.0.1:8765/annotate` in your browser. It runs on the laptop only and needs no
+certificate and no iPads. While the recording server is running, the same page is at
+`https://<laptop-ip>:8443/annotate`.
+
+The page shows one waveform per device and, below it, the list of speech segments. Each segment has four
+lines:
+
+| Line | What goes in it | Example |
+|---|---|---|
+| **漢字** | what was said, as normally written | 学生でした。 |
+| **よみ** | the reading in hiragana, with a space between words; `＊` after a mora marks a devoiced vowel | がく＊せい でし＊た。 |
+| **高低** | pitch accent, one box per mora of the よみ: `L` low, `H` high, `D` devoiced (and low) | `LDHH LDL` |
+| **Romaji** | Hepburn, long vowels spelled out; a devoiced vowel is a capital | gakUsei deshIta. |
+
+You only type the first line. When you leave it, the よみ and romaji lines are drafted for you, and you
+correct them where the reading is wrong (names and words like 私 or 日本 are common cases). A line you
+corrected by hand is not overwritten when you edit the text again; **↻ よみ** rewrites both lines on purpose.
+Correcting the よみ line updates the romaji. A line gets an orange edge when something is left over in it
+(kanji or digits in the よみ, non-Latin characters in the romaji). Switch **よみ・Romaji** off in the toolbar to
+type plain text only, for example for English.
+
+The pitch line is filled in by hand. It always has exactly as many boxes as the よみ has morae (きょ, ん, っ and
+ー each count as one). Click a box to step through L → H → D, or put the cursor in the line and type the
+letters one after another (`LHHLL…`); ← and → move between morae. High boxes sit high and low boxes sit low,
+so the line reads as the pitch contour. When you edit the よみ, the morae that did not change keep their
+marks and new ones start empty (saved as `_`).
+
+Devoicing is one fact written three ways, and the page keeps them in step: `＊` in the よみ, `D` in the pitch
+line, a capital vowel in the romaji. Set any one of them and the other two follow, as long as the romaji is
+still the automatic draft.
+
+1. **Auto-segment** marks the speech in every track that has no segments yet. It uses `aligned/utterances.tsv`
+   if you ran `tools.utterances`, else `aligned/draft.rttm`, else the pauses in each track. For several
+   speakers, run `tools.align` and `tools.draft_rttm` first: pauses alone cannot tell a speaker from the
+   neighbour's voice in their microphone.
+2. Fix the segments on the waveform: drag an edge to move it, drag on empty space to add one, and use
+   **Split**, **Merge ↓** and **Delete** in the list. **Undo** takes back any of these.
+3. Type. **Enter** goes to the next segment and plays it, **Esc** pauses or replays the current one. The
+   **Shortcuts** button lists the rest.
+
+With several devices, clicking a segment plays that speaker's own microphone; **Mix** plays everyone. The
+strip along the bottom of a lane shows the emotion the participant had tapped.
+
+Everything is saved as you type, in `aligned/` if the session is aligned and in the session folder otherwise:
+
+- `transcript.tsv`: `speaker, device, start_s, end_s, dur_s, emotion, text, kana, pitch, romaji`. The columns
+  of `utterances.tsv` plus the four lines; `emotion` is the one tapped during most of the segment. `pitch` has
+  one letter per mora, grouped like the words in `kana`.
+- `transcript.json`: the same segments, which the page loads again next time.
+
+Align a session before you transcribe it. A transcript made on the unaligned tracks stays in the session
+folder and is not moved onto the aligned timeline.
+
+`python -m tools.reading "今日は東京へ行きます。"` prints the drafted よみ and romaji for a sentence.
+
 ## Project layout
 
 ```
 server.py        FastAPI + WebSocket server: receives audio, runs sessions
-static/          recorder page (/record), admin page (/control), shared assets
-tools/           post-processing: align, combine, draft_rttm, utterances
+static/          recorder page (/record), admin page (/control), transcription page (/annotate), shared assets
+tools/           post-processing: align, combine, draft_rttm, utterances;
+                 transcription: annotate (page backend), reading (よみがな and romaji drafts)
 make_cert.sh     local HTTPS certificate for the laptop's IP
 ```
 

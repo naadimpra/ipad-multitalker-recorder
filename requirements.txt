@@ -4,3 +4,7 @@ numpy>=1.26
 soundfile>=0.12
 scipy>=1.11
 soxr>=0.3
+# Japanese readings for the transcription page (drafts the yomigana from the text). About 250 MB with
+# its dictionary; the page works without these two, you then type the yomigana yourself.
+fugashi>=1.3
+unidic-lite>=1.0.8
