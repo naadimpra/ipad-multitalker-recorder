@@ -139,22 +139,54 @@ If the server crashed mid-session, rebuild the WAVs from the raw files with
 
 ## Transcribing
 
+A browser page for writing down what each speaker said, next to a playable waveform of their own microphone.
+
+![The transcription page: one waveform per speaker at the top, and below it the speech segments with their four lines](docs/annotate-editor.png)
+
+### Starting it from the command line
+
 ```bash
-.venv/bin/python -m tools.annotate recordings/<session>   # or just `-m tools.annotate` to pick a session
+.venv/bin/python -m tools.annotate recordings/<session>    # open one session
+.venv/bin/python -m tools.annotate                         # list the sessions in recordings/ and pick one
+.venv/bin/python -m tools.annotate /path/to/sessions       # the same, for sessions kept in another folder
 ```
 
-This opens `http://127.0.0.1:8765/annotate` in your browser. It runs on the laptop only and needs no
-certificate and no iPads. While the recording server is running, the same page is at
-`https://<laptop-ip>:8443/annotate`.
+The command prints the address, opens it in your browser (`http://127.0.0.1:8765/annotate`) and keeps
+running until you press Ctrl+C. It runs on the laptop only and needs no certificate and no iPads.
+
+| Option | What it does |
+|---|---|
+| `--port 9000` | use another port (default 8765), for example when 8765 is already in use |
+| `--no-open` | do not open the browser; open the printed address yourself |
+
+For a session with several devices, align it first so that every speaker is on the same timeline and
+Auto-segment can tell the speakers apart:
+
+```bash
+.venv/bin/python -m tools.align      recordings/<session>
+.venv/bin/python -m tools.draft_rttm recordings/<session>
+.venv/bin/python -m tools.annotate   recordings/<session>
+```
+
+The よみ and romaji drafts need the `fugashi` and `unidic-lite` packages (about 250 MB). They are in
+`requirements.txt`; if your `.venv` is older than this page, run `.venv/bin/pip install -r requirements.txt`
+again. Without them the page still works and you type the よみ yourself.
+
+While the recording server is running you do not need the command: the same page is at
+`https://<laptop-ip>:8443/annotate`, and the start page has a **Transcribe** button.
+
+### The four lines
 
 The page shows one waveform per device and, below it, the list of speech segments. Each segment has four
 lines:
+
+![One segment: the text, its reading with ＊ after the devoiced morae, one pitch box per mora, and the romaji](docs/annotate-lines.png)
 
 | Line | What goes in it | Example |
 |---|---|---|
 | **漢字** | what was said, as normally written | 学生でした。 |
 | **よみ** | the reading in hiragana, with a space between words; `＊` after a mora marks a devoiced vowel | がく＊せい でし＊た。 |
-| **高低** | pitch accent, one box per mora of the よみ: `L` low, `H` high, `D` devoiced (and low) | `LDHH LDL` |
+| **高低** | pitch accent, one box per mora of the よみ: `L` low, `H` high, `D` devoiced (and low) | `LDHH HDL` |
 | **Romaji** | Hepburn, long vowels spelled out; a devoiced vowel is a capital | gakUsei deshIta. |
 
 You only type the first line. When you leave it, the よみ and romaji lines are drafted for you, and you
@@ -174,6 +206,8 @@ Devoicing is one fact written three ways, and the page keeps them in step: `＊`
 line, a capital vowel in the romaji. Set any one of them and the other two follow, as long as the romaji is
 still the automatic draft.
 
+### Working through a session
+
 1. **Auto-segment** marks the speech in every track that has no segments yet. It uses `aligned/utterances.tsv`
    if you ran `tools.utterances`, else `aligned/draft.rttm`, else the pauses in each track. For several
    speakers, run `tools.align` and `tools.draft_rttm` first: pauses alone cannot tell a speaker from the
@@ -186,6 +220,8 @@ still the automatic draft.
 With several devices, clicking a segment plays that speaker's own microphone; **Mix** plays everyone. The
 strip along the bottom of a lane shows the emotion the participant had tapped.
 
+### What it saves
+
 Everything is saved as you type, in `aligned/` if the session is aligned and in the session folder otherwise:
 
 - `transcript.tsv`: `speaker, device, start_s, end_s, dur_s, emotion, text, kana, pitch, romaji`. The columns
@@ -196,7 +232,13 @@ Everything is saved as you type, in `aligned/` if the session is aligned and in 
 Align a session before you transcribe it. A transcript made on the unaligned tracks stays in the session
 folder and is not moved onto the aligned timeline.
 
-`python -m tools.reading "今日は東京へ行きます。"` prints the drafted よみ and romaji for a sentence.
+To see the drafted よみ and romaji for a sentence without opening the page:
+
+```bash
+.venv/bin/python -m tools.reading "今日は東京へ行きます。"
+# きょう は とうきょう へ いきます。
+# kyou wa toukyou e ikimasu.
+```
 
 ## Project layout
 
@@ -205,6 +247,7 @@ server.py        FastAPI + WebSocket server: receives audio, runs sessions
 static/          recorder page (/record), admin page (/control), transcription page (/annotate), shared assets
 tools/           post-processing: align, combine, draft_rttm, utterances;
                  transcription: annotate (page backend), reading (よみがな and romaji drafts)
+docs/            screenshots used in this README
 make_cert.sh     local HTTPS certificate for the laptop's IP
 ```
 
