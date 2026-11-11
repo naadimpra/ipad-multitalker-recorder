@@ -1,0 +1,111 @@
+/* Transcription page (/annotate). Tokens and basic components come from app.css. */
+body.an:has(#editor:not([hidden])) { height: 100vh; height: 100dvh; overflow: hidden; display: flex; flex-direction: column; }
+#editor { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+#editor .banner { margin: 0 16px 10px; }
+
+/* ---- session list ---- */
+.an-sess { display: flex; align-items: center; gap: 12px; color: inherit; text-decoration: none; }
+.an-sess:hover { border-color: var(--accent); }
+.an-sess b { display: block; overflow-wrap: anywhere; }
+
+/* ---- header + toolbar ---- */
+.an-top { display: flex; align-items: center; gap: 12px; padding: 10px 16px; }
+.an-top h1 { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.an-back { color: var(--accent); text-decoration: none; font-weight: 600; white-space: nowrap; }
+#saveState { white-space: nowrap; }
+#saveState.bad { color: var(--bad); font-weight: 700; }
+.an-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; padding: 8px 16px;
+  background: var(--card); border-block: 1px solid var(--line); font-size: .9rem; }
+.an-bar label { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); white-space: nowrap; }
+.an-bar select { width: auto; padding: 6px 8px; }
+.an-bar .seg button { padding: 6px 12px; }
+.an-check input { width: auto; padding: 0; margin: 0; accent-color: var(--accent); }
+.an-play { width: 44px; padding: 8px 0; }
+.an-clock { font-variant-numeric: tabular-nums; font-weight: 700; font-size: 1.05rem; min-width: 5.2em; }
+
+/* ---- timeline: track names on the left, one scrolling canvas on the right ---- */
+.an-tl { flex: none; display: flex; max-height: 46vh; overflow-y: auto; background: var(--card);
+  border-bottom: 1px solid var(--line); }
+#gutter { flex: none; width: 112px; padding-top: 24px; /* = RULER in annotate.js */ border-right: 1px solid var(--line); }
+.an-track { display: flex; align-items: center; gap: 8px; width: 100%; padding: 0 10px; border-radius: 0;
+  background: transparent; color: var(--muted); text-align: left; font-weight: 600; border-top: 1px solid var(--line); }
+.an-track i { flex: none; width: 10px; height: 10px; border-radius: 50%; background: var(--c); opacity: .45; }
+.an-track span { min-width: 0; overflow: hidden; text-overflow: ellipsis; line-height: 1.2; }
+.an-track small { display: block; font-weight: 400; font-size: .75rem; }
+.an-track.on { color: var(--fg); background: var(--soft); }
+.an-track.on i { opacity: 1; box-shadow: 0 0 0 3px color-mix(in srgb, var(--c) 30%, transparent); }
+#scroller { flex: 1; min-width: 0; overflow-x: auto; overflow-y: hidden; overscroll-behavior-x: contain; }
+#spacer { position: relative; }
+#cv { position: sticky; left: 0; display: block; touch-action: pan-x; }
+#ph { position: absolute; top: 0; bottom: 0; left: -1px; width: 2px; background: var(--rec); pointer-events: none;
+  will-change: transform; }
+
+/* ---- segment list ---- */
+.an-filter { padding: 10px 16px 0; }
+.an-filter .chip { padding: 5px 12px; font-size: .85rem; cursor: pointer; border: 0; font-weight: 600; }
+#list { flex: 1; min-height: 0; overflow-y: auto; padding: 10px 16px 45vh; }
+.an-empty { max-width: 34em; margin: 28px auto; text-align: center; color: var(--muted); }
+.an-empty button { margin-top: 12px; }
+.an-row { display: grid; grid-template-columns: 9.5em minmax(0, 1fr) auto; gap: 4px 12px; align-items: start;
+  padding: 8px 10px 8px 12px; margin-bottom: 6px; background: var(--card); border: 1px solid var(--line);
+  border-left: 4px solid var(--c); border-radius: 10px; }
+.an-row.sel { border-color: var(--accent); border-left-color: var(--c); box-shadow: 0 0 0 1px var(--accent); }
+.an-row.now .an-time { color: var(--rec); }
+.an-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; font-size: .85rem; padding-top: 5px; }
+.an-rowplay { width: 28px; height: 28px; padding: 0; border-radius: 50%; font-size: .75rem; background: var(--soft); color: var(--fg); }
+.an-time { font-variant-numeric: tabular-nums; font-weight: 600; }
+.an-time small { color: var(--muted); font-weight: 400; }
+.an-who { color: var(--muted); }
+.an-fields { display: grid; gap: 4px; }
+.an-field { display: grid; grid-template-columns: 3.4em minmax(0, 1fr); align-items: start; gap: 6px; }
+.an-field > span { font-size: .72rem; font-weight: 700; color: var(--muted); padding-top: 9px; text-align: right; white-space: nowrap; }
+.an-field textarea { padding: 6px 9px; border-radius: 8px; resize: none; overflow: hidden; line-height: 1.45;
+  field-sizing: content; min-height: 2.2em; display: block; }
+.an-field textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+.an-field[data-f="text"] textarea { font-size: 1.05rem; }
+.an-field[data-f="kana"] textarea, .an-field[data-f="romaji"] textarea { font-size: .92rem; background: var(--soft); border-color: transparent; }
+/* a devoiced vowel is a capital in the romaji: a font where I and l look different */
+.an-field[data-f="romaji"] textarea { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: .88rem; }
+.an-field.warn textarea { border-color: var(--warn); box-shadow: inset 3px 0 0 var(--warn); }
+/* pitch line: one box per mora; H sits high, L and D sit low, so the row reads as the contour */
+.an-pitch { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 6px 12px; padding: 2px 9px 3px; min-height: 2.2em; }
+.an-pitch > .muted { font-size: .8rem; align-self: center; }
+.an-word { display: inline-flex; gap: 2px; }
+.an-mora { display: grid; grid-template-rows: auto 2.7em; justify-items: stretch; width: 2em; padding: 0; border-radius: 6px;
+  background: transparent; color: var(--fg); font-weight: 400; }
+.an-mora small { font-size: .7rem; line-height: 1.5; color: var(--muted); text-align: center; white-space: nowrap; }
+.an-mora b { display: grid; justify-items: center; align-items: end; padding: 2px 0; border-radius: 5px; font-size: .8rem;
+  border: 1px solid var(--line); background: linear-gradient(var(--soft), var(--soft)) bottom / 100% 50% no-repeat; }
+.an-mora[data-p="H"] b { align-items: start; border-color: var(--accent); color: var(--accent);
+  background: linear-gradient(color-mix(in srgb, var(--accent) 18%, transparent), color-mix(in srgb, var(--accent) 18%, transparent)) top / 100% 50% no-repeat; }
+.an-mora[data-p="D"] b { border-style: dashed; border-color: var(--muted); color: var(--muted); font-style: italic; }
+.an-mora[data-p="_"] b { align-items: center; border-style: dashed; background: none; color: var(--muted); }
+.an-mora:focus-visible { outline: none; }
+.an-mora:focus b, .an-mora:focus-visible b { outline: 2px solid var(--accent); outline-offset: 1px; }
+#list.one .an-field:not([data-f="text"]) { display: none; }   /* よみ・Romaji switched off */
+#list.one .an-field > span { display: none; }
+#list.one .an-field { grid-template-columns: minmax(0, 1fr); }
+#list.one [data-act="read"] { display: none; }
+.an-acts { display: flex; flex-direction: column; gap: 4px; visibility: hidden; }
+.an-row.sel .an-acts, .an-row:hover .an-acts { visibility: visible; }
+.an-acts button { padding: 3px 9px; font-size: .75rem; border-radius: 7px; background: var(--soft); color: var(--fg); white-space: nowrap; }
+.an-acts button.del { color: var(--bad); }
+@media (prefers-color-scheme: dark) { .an-acts button.del { color: #f87171; } }
+
+/* ---- shortcuts ---- */
+#keys { border: 1px solid var(--line); border-radius: 16px; background: var(--card); color: var(--fg); padding: 18px 22px;
+  max-width: min(560px, calc(100vw - 32px)); max-height: calc(100dvh - 32px); }
+#keys::backdrop { background: rgba(0, 0, 0, .45); }
+#keys h2 { margin: 0 0 4px; font-size: 1.1rem; }
+#keys h3 { margin: 14px 0 6px; font-size: .8rem; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); }
+#keys dl { display: grid; grid-template-columns: auto 1fr; gap: 6px 14px; margin: 0; font-size: .9rem; }
+#keys dt { white-space: nowrap; } #keys dd { margin: 0; color: var(--muted); }
+#keys form { margin-top: 16px; text-align: right; }
+kbd { font: inherit; font-size: .8rem; padding: 1px 6px; border-radius: 5px; border: 1px solid var(--line); background: var(--soft); }
+
+@media (max-width: 720px) {
+  #gutter { width: 64px; } .an-track { padding: 0 6px; font-size: .8rem; }
+  .an-row { grid-template-columns: minmax(0, 1fr); }
+  .an-meta { padding-top: 0; }
+  .an-acts { flex-direction: row; visibility: visible; }
+}
