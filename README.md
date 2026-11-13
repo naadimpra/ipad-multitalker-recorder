@@ -217,15 +217,30 @@ still the automatic draft.
 3. Type. **Enter** goes to the next segment and plays it, **Esc** pauses or replays the current one. The
    **Shortcuts** button lists the rest.
 
-With several devices, clicking a segment plays that speaker's own microphone; **Mix** plays everyone. The
-strip along the bottom of a lane shows the emotion the participant had tapped.
+With several devices, clicking a segment plays that speaker's own microphone; **Mix** plays everyone.
+
+### Emotions
+
+Every segment has one emotion. It starts as the emotion the speaker had tapped during most of the segment
+while recording, or Neutral when nothing was tapped, and you can change it:
+
+- pick another one from the list in the segment's row, or
+- select the segment and press **1** to **8** (the order of the list, which is the order in
+  `static/emotions.js`).
+
+On the waveform a segment is drawn in the colour of its emotion from its start to its end: a solid span with
+the emotion's name in the band above the waveform, and a lighter fill over the waveform itself. When the
+emotion changes inside a segment, **Split** it there and set the two halves.
+
+What the participant tapped is never rewritten. It stays in `session.json` (and `aligned/emotions.tsv`) and
+shows as a thin strip along the bottom of the lane, so you can compare it with the labels you set.
 
 ### What it saves
 
 Everything is saved as you type, in `aligned/` if the session is aligned and in the session folder otherwise:
 
 - `transcript.tsv`: `speaker, device, start_s, end_s, dur_s, emotion, text, kana, pitch, romaji`. The columns
-  of `utterances.tsv` plus the four lines; `emotion` is the one tapped during most of the segment. `pitch` has
+  of `utterances.tsv` plus the four lines; `emotion` is the segment's emotion as set on the page. `pitch` has
   one letter per mora, grouped like the words in `kana`.
 - `transcript.json`: the same segments, which the page loads again next time.
 
