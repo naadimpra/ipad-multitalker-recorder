@@ -1,5 +1,6 @@
 // Transcription page: one waveform lane per device, speech segments on the lanes, and for every
-// segment four lines (as written / yomigana / pitch accent / romaji). Everything is saved as you type.
+// segment four lines (as written / yomigana / pitch accent / romaji) and an emotion. Everything is
+// saved as you type.
 import { EMOTIONS } from "/static/emotions.js";
 
 const $ = (id) => document.getElementById(id);
@@ -14,6 +15,8 @@ const FIELDS = [
 // anything that is not plain Latin in the romaji. Shown as a warning, never blocked.
 const SUSPECT = { kana: /[㐀-鿿々〆A-Za-z0-9０-９]/, romaji: /[^\x00-\x7fāīūēōâîûêô]/ };
 const RULER = 24, MAX_PPS = 600, MIN_SEG = 0.05, EDGE_PX = 6;
+const EMO_H = 18;                   // the emotion band along the top of every lane, above the waveform
+const DEFAULT_EMOTION = "neutral";  // a segment nobody tapped an emotion for
 
 // ---- morae and pitch ----
 // The pitch line has one mark per mora of the yomigana: L low, H high, D devoiced (and low), _ not set.
@@ -73,7 +76,7 @@ const JSON_HEADERS = { "content-type": "application/json" };
 
 let info, tracks = [], segs = [], duration = 0.1, rev = 0;
 let pps = 50, laneH = 96, t = 0;       // zoom (px per second), lane height (px), playhead (s)
-let sel = null, active = null, listen = "track", filter = null, showEmo = false;
+let sel = null, active = null, listen = "track", filter = null, showTapped = false;
 let drag = null, undo = [], textUndoFor = null;
 
 const cv = $("cv"), ctx = cv.getContext("2d"), scroller = $("scroller"), spacer = $("spacer"), list = $("list");
@@ -82,9 +85,33 @@ let W = 0, H = 0, css = {};
 // ---------------- small helpers ----------------
 const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
 const newId = () => Math.random().toString(16).slice(2, 10).padEnd(8, "0");
-const newSeg = (device, start, end) => ({ id: newId(), device, start, end, text: "", kana: "", pitch: "", romaji: "" });
 const segById = (id) => segs.find((s) => s.id === id);
 const trackOf = (dev) => tracks.find((x) => x.device === dev);
+const newSeg = (device, start, end, emotion = tappedEmotion(device, start, end)) =>
+  ({ id: newId(), device, start, end, emotion, text: "", kana: "", pitch: "", romaji: "" });
+
+// ---- emotion ----
+// Every segment has one. It starts as what the speaker had tapped during most of the segment while
+// recording (neutral when nothing was tapped) and from then on it is the annotator's to change.
+function tappedEmotion(device, start, end) {
+  let best = DEFAULT_EMOTION, most = 0;
+  for (const [a, b, emo] of trackOf(device)?.emotions ?? []) {
+    const ov = Math.min(end, b) - Math.max(start, a);
+    if (ov > most) { most = ov; best = emo; }
+  }
+  return best;
+}
+// An id that is no longer in emotions.js is kept as it is and shown by its id.
+const emoOf = (id) => EMO[id] || { id, en: id, ja: "", emoji: "", color: css.muted };
+const emoLabel = (e) => `${e.emoji} ${e.en}`.trim();
+// The emotion colours are dark (white text sits on them). As the see-through fill of a segment they
+// would vanish on a dark page, so there the fill uses the colour mixed half-way to white.
+const lightened = {};
+function emoTint(e) {
+  if (!css.dark || !/^#[0-9a-f]{6}$/i.test(e.color)) return e.color;
+  return lightened[e.color] ??= "#" + [1, 3, 5].map((i) =>
+    Math.round((parseInt(e.color.slice(i, i + 2), 16) + 255) / 2).toString(16).padStart(2, "0")).join("");
+}
 const sortSegs = () => segs.sort((a, b) => a.start - b.start || a.device.localeCompare(b.device));
 const shownSegs = () => segs.filter((s) => !filter || s.device === filter);
 const rowOf = (id) => (id ? list.querySelector(`.an-row[data-id="${CSS.escape(id)}"]`) : null);
@@ -107,6 +134,7 @@ function toast(text, kind = "info", ms = 4000) {
 function readTheme() {
   const s = getComputedStyle(document.documentElement);
   for (const k of ["card", "fg", "muted", "line", "soft", "warn"]) css[k] = s.getPropertyValue(`--${k}`).trim();
+  css.dark = matchMedia("(prefers-color-scheme: dark)").matches;
 }
 
 // ---------------- session list ----------------
@@ -144,13 +172,14 @@ async function openSession() {
   tracks = info.tracks.map((x, i) => ({ ...x, color: COLORS[i % COLORS.length], mips: null }));
   segs = info.transcript.segments.filter((s) => trackOf(s.device)).map((s) => ({
     id: s.id || newId(), device: s.device, start: +s.start, end: +s.end,
+    emotion: s.emotion || tappedEmotion(s.device, +s.start, +s.end),  // transcripts from before emotions were editable
     text: s.text || "", kana: s.kana || "", pitch: s.pitch || "", romaji: s.romaji || "" }));
   sortSegs();
   rev = info.transcript.rev;
   duration = Math.max(0.1, ...tracks.map((x) => x.duration));
   active = tracks[0]?.device ?? null;
-  showEmo = tracks.some((x) => x.emotions.some((e) => e[2] !== "neutral"));
-  laneH = tracks.length <= 2 ? 120 : tracks.length <= 4 ? 92 : 72;
+  showTapped = tracks.some((x) => x.emotions.some((e) => e[2] !== DEFAULT_EMOTION));
+  laneH = EMO_H + (tracks.length <= 2 ? 120 : tracks.length <= 4 ? 92 : 72);
 
   if (!tracks.length) banner("No audio was found in this session.");
   else if (info.timeline === "raw" && tracks.length > 1) {
@@ -286,12 +315,16 @@ function paint() {
   }
 }
 
+// A lane, top to bottom: the emotion band (one coloured span with its name per segment), then the
+// waveform with the segments over it, then a thin strip of what the speaker had tapped while recording.
 function paintLane(tr, y, x0) {
-  const mid = y + laneH / 2, amp = laneH / 2 - 8;
+  const mid = y + EMO_H + (laneH - EMO_H) / 2, amp = (laneH - EMO_H) / 2 - 8;
   ctx.save();
   ctx.beginPath();
   ctx.rect(0, y, W, laneH);
   ctx.clip();
+  ctx.fillStyle = css.soft;
+  ctx.fillRect(0, y, W, EMO_H);
   ctx.fillStyle = css.line;
   ctx.fillRect(0, y, W, 1);
 
@@ -314,7 +347,7 @@ function paintLane(tr, y, x0) {
     ctx.globalAlpha = 1;
   }
 
-  if (showEmo) {  // what the participant had tapped, as a strip along the bottom of the lane
+  if (showTapped) {  // what the participant had tapped, as a strip along the bottom of the lane
     for (const [a, b, emo] of tr.emotions) {
       const xa = a * pps - x0, xb = b * pps - x0;
       if (xb < 0 || xa > W) continue;
@@ -324,39 +357,53 @@ function paintLane(tr, y, x0) {
   }
 
   for (const s of segs) {
-    if (s.device === tr.device) paintSeg(tr, y, s.start * pps - x0, s.end * pps - x0, s.id === sel, s.text);
+    if (s.device === tr.device) paintSeg(y, s.start * pps - x0, s.end * pps - x0, s.id === sel, s.text, s.emotion);
   }
   if (drag?.kind === "new" && drag.ghost && drag.tr === tr) {
-    paintSeg(tr, y, drag.ghost[0] * pps - x0, drag.ghost[1] * pps - x0, true, "");
+    const [a, b] = drag.ghost;
+    paintSeg(y, a * pps - x0, b * pps - x0, true, "", tappedEmotion(tr.device, a, b));
   }
   ctx.restore();
 }
 
-function paintSeg(tr, y, xa, xb, on, text) {
+// One segment, in the colour of its emotion from its start to its end: a solid span with the emotion's
+// name in the band on top, and a see-through fill over the waveform below it.
+function paintSeg(y, xa, xb, on, text, emotion) {
   if (xb < 0 || xa > W) return;
-  const empty = !text.trim();
-  ctx.fillStyle = tr.color;
-  ctx.globalAlpha = on ? 0.3 : empty ? 0.07 : 0.16;
-  ctx.fillRect(xa, y + 1, xb - xa, laneH - 1);
+  const empty = !text.trim(), e = emoOf(emotion), left = Math.max(xa, 0), top = y + EMO_H;
+  ctx.fillStyle = emoTint(e);
+  ctx.globalAlpha = on ? 0.38 : empty ? 0.14 : 0.24;
+  ctx.fillRect(xa, top, xb - xa, laneH - EMO_H);
   ctx.globalAlpha = 1;
-  ctx.strokeStyle = on ? css.fg : tr.color;
+  ctx.fillStyle = e.color;
+  ctx.fillRect(xa, y + 1, xb - xa, EMO_H - 1);
+  ctx.strokeStyle = on ? css.fg : emoTint(e);
   ctx.lineWidth = on ? 2 : 1;
   ctx.setLineDash(empty && !on ? [4, 3] : []);  // dashed = nothing typed yet
   ctx.strokeRect(xa + 0.5, y + 1.5, Math.max(1, xb - xa - 1), laneH - 2);
   ctx.setLineDash([]);
-  const left = Math.max(xa, 0);
+  if (xb - left > 16) {  // the emotion's name, kept in view while its span scrolls off to the left
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(left + 1, y + 1, xb - left - 2, EMO_H - 1);
+    ctx.clip();
+    ctx.fillStyle = "#fff";
+    ctx.font = `600 11px ${FONT}`;
+    ctx.fillText(emoLabel(e), left + 5, y + EMO_H / 2 + 1);
+    ctx.restore();
+  }
   if (!empty && xb - left > 28) {
     ctx.save();
     ctx.beginPath();
-    ctx.rect(left + 2, y + 3, xb - left - 4, 18);
+    ctx.rect(left + 2, top + 3, xb - left - 4, 18);
     ctx.clip();
     ctx.fillStyle = css.card;
     ctx.globalAlpha = 0.82;
-    ctx.fillRect(left + 2, y + 3, xb - left - 4, 18);
+    ctx.fillRect(left + 2, top + 3, xb - left - 4, 18);
     ctx.globalAlpha = 1;
     ctx.fillStyle = css.fg;
     ctx.font = `12px ${FONT}`;
-    ctx.fillText(text, left + 6, y + 12.5);
+    ctx.fillText(text, left + 6, top + 12.5);
     ctx.restore();
   }
 }
@@ -597,13 +644,24 @@ function setTime(row, s) {
   row.querySelector(".an-time").innerHTML = `${fmt(s.start)} – ${fmt(s.end)} <small>${(s.end - s.start).toFixed(1)} s</small>`;
 }
 
-function emotionOf(s) {  // the emotion tapped during most of the segment
-  let best = null, most = 0;
-  for (const [a, b, emo] of trackOf(s.device).emotions) {
-    const ov = Math.min(s.end, b) - Math.max(s.start, a);
-    if (ov > most) { most = ov; best = emo; }
-  }
-  return best;
+// The emotion picker of a row: every emotion of emotions.js, in the colour of the one chosen.
+function showEmotion(row, s) {
+  const pick = row?.querySelector(".an-emo");
+  if (!pick) return;
+  const ids = EMOTIONS.map((e) => e.id);
+  if (!ids.includes(s.emotion)) ids.push(s.emotion);
+  pick.replaceChildren(...ids.map((id) => new Option(emoLabel(emoOf(id)), id)));
+  pick.value = s.emotion;
+  pick.style.setProperty("--e", emoOf(s.emotion).color);
+}
+
+function setEmotion(s, id) {
+  if (!s || !id || s.emotion === id) return;
+  pushUndo();
+  s.emotion = id;
+  showEmotion(rowOf(s.id), s);
+  draw();
+  markDirty();
 }
 
 function check(label, key, value) {
@@ -621,7 +679,8 @@ function rowEl(s) {
   row.innerHTML = `
     <div class="an-meta">
       <button class="an-rowplay" data-act="play" tabindex="-1" title="Play this segment">▶</button>
-      <span class="an-time"></span><span class="an-who"></span><span class="an-emo"></span>
+      <span class="an-time"></span><span class="an-who"></span>
+      <select class="an-emo" tabindex="-1" aria-label="Emotion" title="The emotion of this segment (number keys 1–${Math.min(9, EMOTIONS.length)} when it is selected)"></select>
     </div>
     <div class="an-fields"></div>
     <div class="an-acts">
@@ -632,11 +691,7 @@ function rowEl(s) {
     </div>`;
   setTime(row, s);
   if (tracks.length > 1) row.querySelector(".an-who").textContent = tr.speaker;
-  const emo = showEmo && EMO[emotionOf(s)];
-  if (emo) {
-    row.querySelector(".an-emo").textContent = emo.emoji;
-    row.querySelector(".an-emo").title = emo.en;
-  }
+  showEmotion(row, s);
   for (const f of FIELDS) {
     const label = document.createElement("label");
     label.className = "an-field";
@@ -854,7 +909,7 @@ function split(s) {
   const caret = el?.dataset?.f === "text" && el.closest(".an-row")?.dataset.id === s.id ? el.selectionStart : null;
   pushUndo();
   const whole = s.text;
-  const b = newSeg(s.device, +t.toFixed(3), s.end);
+  const b = newSeg(s.device, +t.toFixed(3), s.end, s.emotion);
   s.end = b.start;
   if (caret != null) {  // the text is cut at the cursor; the readings are drafted again for both halves
     s.text = whole.slice(0, caret).trimEnd();
@@ -905,7 +960,7 @@ async function autoSegment() {
     if (!r.segments.length) return toast("No speech was found. Drag on a waveform to mark segments by hand.", "err");
     pushUndo();
     if (replace) segs = [];
-    for (const g of r.segments) segs.push(newSeg(g.device, g.start, g.end));
+    for (const g of r.segments) segs.push(newSeg(g.device, g.start, g.end, g.emotion || undefined));
     changed();
     toast(`${r.segments.length} segments drafted from ${r.source === "silence" ? "the pauses in the audio" : r.source}. ` +
       "Check the edges as you go.");
@@ -954,7 +1009,12 @@ list.addEventListener("input", (e) => {
   if (f === "text") { progress(); draw(); }
   markDirty();
 });
-list.addEventListener("change", (e) => {  // leaving a line that was edited
+list.addEventListener("change", (e) => {  // an emotion picked, or leaving a line that was edited
+  const pick = e.target.closest(".an-emo");
+  if (pick) {
+    setEmotion(segById(pick.closest(".an-row").dataset.id), pick.value);
+    return pick.blur();  // or Space would open the list again instead of playing
+  }
   const ta = e.target.closest("textarea");
   if (!ta) return;
   draftReading(ta.closest(".an-row").dataset.id, ta.dataset.f, ta._prev ?? "");
@@ -1071,6 +1131,7 @@ document.addEventListener("keydown", (e) => {
   else if (k === "Enter" && s) fieldEl(s.id, "text")?.focus();
   else if (k === "s" && s) split(s);
   else if (k === "m" && s) merge(s);
+  else if (/^[1-9]$/.test(k) && s && EMOTIONS[k - 1]) setEmotion(s, EMOTIONS[k - 1].id);
   else if ((k === "Delete" || k === "Backspace") && s) remove(s);
   else if (k === "+" || k === "=") setZoom(pps * 1.5);
   else if (k === "-") setZoom(pps / 1.5);

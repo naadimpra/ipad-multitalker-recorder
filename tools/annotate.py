@@ -1,6 +1,7 @@
 """Transcribe a session in the browser: waveform, playback and four lines per speech segment
 (text as written, yomigana, pitch accent, romaji; the readings are drafted by tools.reading and then
-corrected, the pitch is filled in by hand: one of L / H / D per mora of the yomigana).
+corrected, the pitch is filled in by hand: one of L / H / D per mora of the yomigana), plus one emotion
+label per segment.
 
     python -m tools.annotate recordings/<session>     (or the recordings folder, to pick a session)
 
@@ -12,9 +13,14 @@ is saved in aligned/, next to draft.rttm and utterances.tsv. Otherwise the raw t
 transcript is saved in the session folder (fine for one device; align first when there are several).
 
 Output, rewritten on every change:
-  transcript.json   segments (device, speaker, start, end, text, kana, pitch, romaji) - what the page loads again
+  transcript.json   segments (device, speaker, start, end, emotion, text, kana, pitch, romaji) - what the page
+                    loads again
   transcript.tsv    speaker, device, start_s, end_s, dur_s, emotion, text, kana, pitch, romaji - the columns of
-                    utterances.tsv plus the transcript lines; emotion is the one tapped during most of the segment
+                    utterances.tsv plus the transcript lines
+
+Emotion: a segment starts with the emotion the speaker had tapped during most of it (neutral when nothing
+was tapped) and the annotator can change it. The taps themselves are never rewritten: they stay in
+session.json / aligned/emotions.tsv, and the page shows them as a thin strip under each waveform.
 
 In the yomigana a ＊ after a mora marks a devoiced vowel (し＊ -> shI in the romaji). The pitch line has
 one letter per mora, grouped like the words of the yomigana: L low, H high, D devoiced (and low),
@@ -54,6 +60,7 @@ PEAK_HZ = 200          # waveform resolution sent to the page (min/max pairs per
 ROOM_MICS = ("center", "lav")
 MAX_SEGMENTS, MAX_TEXT = 20000, 5000
 SCRIPTS = ("text", "kana", "pitch", "romaji")  # as written (kanji), yomigana, pitch per mora, romaji
+DEFAULT_EMOTION = "neutral"  # an id from static/emotions.js; a segment nobody labelled is this
 _save_lock = threading.Lock()
 
 
@@ -218,7 +225,10 @@ def draft(sdir: Path, meta: dict, tl: str, base: Path, devices: list[str]) -> di
         with open(base / "utterances.tsv", newline="") as fh:
             for r in csv.DictReader(fh, delimiter="\t"):
                 dev = r.get("device") or to_device.get(r["speaker"], "")
-                rows.append({"device": dev, "start": float(r["start_s"]), "end": float(r["end_s"])})
+                row = {"device": dev, "start": float(r["start_s"]), "end": float(r["end_s"])}
+                if r.get("emotion") and r["emotion"] != UNLABELED:  # already worked out there (maybe with --shift)
+                    row["emotion"] = r["emotion"]
+                rows.append(row)
     elif tl == "aligned" and (base / "draft.rttm").exists():
         source = "draft.rttm"
         for spk, segs in read_rttm(base / "draft.rttm").items():
@@ -239,14 +249,16 @@ def draft(sdir: Path, meta: dict, tl: str, base: Path, devices: list[str]) -> di
 def load_transcript(base: Path) -> dict:
     try:
         t = json.loads((base / "transcript.json").read_text())
-        segs = [{k: g.get(k, "") for k in ("id", "device", "start", "end", *SCRIPTS)} for g in t.get("segments", [])]
+        segs = [{k: g.get(k, "") for k in ("id", "device", "start", "end", "emotion", *SCRIPTS)}
+                for g in t.get("segments", [])]
         return {"rev": int(t.get("rev", 0)), "segments": segs}
     except (OSError, ValueError):
         return {"rev": 0, "segments": []}
 
 
 def _emotion_for(ranges: list, s: float, e: float) -> str:
-    best, best_ov = UNLABELED, 0.0
+    """The emotion tapped during most of [s, e): what a segment starts with before anyone edits it."""
+    best, best_ov = DEFAULT_EMOTION, 0.0
     for a, b, emo in ranges:
         ov = min(e, b) - max(s, a)
         if ov > best_ov:
@@ -266,21 +278,23 @@ def save_transcript(sdir: Path, meta: dict, body: dict) -> int:
     raw = body.get("segments")
     if not isinstance(raw, list) or len(raw) > MAX_SEGMENTS:
         raise HTTPException(400, "bad segments")
+    durations = {k: sf.info(str(f)).duration for k, f in files.items()}
+    emo = emotion_ranges(sdir, meta, tl, base, durations)
     segs = []
     for r in raw:
         try:
             s, e, dev = float(r["start"]), float(r["end"]), r["device"]
             scripts = {k: str(r.get(k) or "")[:MAX_TEXT] for k in SCRIPTS}
             scripts["pitch"] = re.sub(r"[^LHD_ ]", "", scripts["pitch"])
+            emotion = re.sub(r"[^\w-]", "", str(r.get("emotion") or ""))[:32]  # an id, as in static/emotions.js
         except (KeyError, TypeError, ValueError):
             raise HTTPException(400, "bad segment")
         if dev not in files or not (0 <= s < e):
             raise HTTPException(400, "bad segment")
         segs.append({"id": str(r.get("id", ""))[:32], "device": dev, "speaker": speaker_name(meta, dev),
-                     "start": round(s, 3), "end": round(e, 3), **scripts})
+                     "start": round(s, 3), "end": round(e, 3),
+                     "emotion": emotion or _emotion_for(emo.get(dev, []), s, e), **scripts})
     segs.sort(key=lambda g: (g["start"], g["device"]))
-    durations = {k: sf.info(str(f)).duration for k, f in files.items()}
-    emo = emotion_ranges(sdir, meta, tl, base, durations)
     with _save_lock:
         rev = load_transcript(base)["rev"]
         if body.get("rev") != rev:  # another window saved in between: don't overwrite its work
@@ -293,7 +307,7 @@ def save_transcript(sdir: Path, meta: dict, body: dict) -> int:
         for g in segs:
             scripts = "\t".join(" ".join(g[k].split()) for k in SCRIPTS)  # tabs / newlines would break the table
             lines.append(f"{g['speaker']}\t{g['device']}\t{g['start']:.3f}\t{g['end']:.3f}\t"
-                         f"{g['end'] - g['start']:.3f}\t{_emotion_for(emo.get(g['device'], []), g['start'], g['end'])}\t{scripts}")
+                         f"{g['end'] - g['start']:.3f}\t{g['emotion']}\t{scripts}")
         _write(base / "transcript.tsv", "\n".join(lines) + "\n")
     return rev
 
