@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Transcribe</title>
+<link rel="stylesheet" href="/static/app.css"><link rel="stylesheet" href="/static/annotate.css">
+</head><body class="an">
+<div id="msgs"></div>
+
+<!-- session list (no ?s= in the address) -->
+<main id="picker" hidden>
+  <header class="top"><h1>Transcribe</h1></header>
+  <div id="sessions"></div>
+  <p id="noSessions" class="muted center" hidden>No recorded sessions yet.</p>
+</main>
+
+<!-- editor -->
+<div id="editor" hidden>
+  <header class="an-top">
+    <a class="an-back" href="/annotate">‹ Sessions</a>
+    <h1 id="title"></h1>
+    <span id="progress" class="muted"></span>
+    <span class="grow"></span>
+    <span id="saveState" class="muted"></span>
+    <button class="ghost small" id="keysBtn">Shortcuts</button>
+  </header>
+  <div id="banner" class="banner" hidden></div>
+  <div id="hint" class="banner info" hidden></div>
+
+  <div class="an-bar">
+    <button id="play" class="small an-play" title="Play / pause (Space)">▶</button>
+    <span id="clock" class="an-clock">0:00.0</span>
+    <label>Speed
+      <select id="speed">
+        <option value="0.5">0.5×</option><option value="0.75">0.75×</option><option value="1" selected>1×</option>
+        <option value="1.25">1.25×</option><option value="1.5">1.5×</option><option value="2">2×</option>
+      </select></label>
+    <div class="seg" id="listen" hidden title="What you hear: the selected speaker's own microphone, or everyone mixed">
+      <button data-listen="track" class="on">Speaker</button><button data-listen="mix">Mix</button></div>
+    <label class="an-check"><input type="checkbox" id="loop"> Loop segment</label>
+    <span class="grow"></span>
+    <label class="an-check" title="Show the yomigana, pitch and romaji lines under each text"><input type="checkbox" id="scripts3"> よみ・Romaji</label>
+    <button class="ghost small" id="draftBtn" title="Find the speech in each track and mark it as segments">Auto-segment</button>
+    <button class="ghost small" id="undoBtn" disabled>Undo</button>
+    <div class="seg" title="Zoom (or Ctrl/⌘ + scroll)">
+      <button id="zoomOut" aria-label="Zoom out">−</button><button id="zoomFit">Fit</button><button id="zoomIn" aria-label="Zoom in">＋</button></div>
+  </div>
+
+  <div class="an-tl">
+    <div id="gutter"></div>
+    <div id="scroller"><div id="spacer"><canvas id="cv"></canvas><div id="ph"></div></div></div>
+  </div>
+
+  <div class="an-filter chips" id="filter" hidden></div>
+  <div id="list"></div>
+</div>
+
+<dialog id="keys">
+  <h2>Shortcuts</h2>
+  <h3>While typing</h3>
+  <dl>
+    <dt><kbd>Enter</kbd> / <kbd>Shift</kbd>+<kbd>Enter</kbd></dt><dd>Next / previous segment, and play it</dd>
+    <dt><kbd>Esc</kbd></dt><dd>Pause, or play this segment again (resumes a little before where it stopped)</dd>
+    <dt><kbd>Shift</kbd>+<kbd>Esc</kbd></dt><dd>Play this segment from its start</dd>
+    <dt><kbd>Tab</kbd></dt><dd>Next line (漢字 → よみ → 高低 → romaji)</dd>
+  </dl>
+  <h3>On the pitch line (高低)</h3>
+  <dl>
+    <dt><kbd>L</kbd> <kbd>H</kbd> <kbd>D</kbd></dt><dd>Low / high / devoiced for this mora, then on to the next</dd>
+    <dt><kbd>←</kbd> <kbd>→</kbd></dt><dd>Previous / next mora (<kbd>↑</kbd> high, <kbd>↓</kbd> low)</dd>
+    <dt>Click a box</dt><dd>Change it: L → H → D</dd>
+    <dt><kbd>＊</kbd> in the よみ</dt><dd>Same as D: し＊ is devoiced, written shI in the romaji</dd>
+  </dl>
+  <h3>Outside a text box</h3>
+  <dl>
+    <dt><kbd>Space</kbd></dt><dd>Play / pause</dd>
+    <dt><kbd>←</kbd> <kbd>→</kbd></dt><dd>Back / forward 2 s (with <kbd>Shift</kbd>: 0.5 s)</dd>
+    <dt><kbd>↑</kbd> <kbd>↓</kbd></dt><dd>Previous / next segment</dd>
+    <dt><kbd>Enter</kbd></dt><dd>Type in the selected segment</dd>
+    <dt><kbd>S</kbd></dt><dd>Split the selected segment at the playhead</dd>
+    <dt><kbd>M</kbd></dt><dd>Merge it with the next one of the same speaker</dd>
+    <dt><kbd>1</kbd> … <kbd>8</kbd></dt><dd>Set its emotion: Neutral, Happy, Sad, … in the order of the list in each row</dd>
+    <dt><kbd>Delete</kbd></dt><dd>Delete the selected segment</dd>
+    <dt><kbd>⌘</kbd>/<kbd>Ctrl</kbd>+<kbd>Z</kbd></dt><dd>Undo</dd>
+    <dt><kbd>+</kbd> <kbd>−</kbd></dt><dd>Zoom</dd>
+  </dl>
+  <h3>On the waveform</h3>
+  <dl>
+    <dt>Click</dt><dd>Move the playhead; click a segment to select it</dd>
+    <dt>Drag on empty space</dt><dd>Mark a new segment</dd>
+    <dt>Drag a segment edge</dt><dd>Adjust where it starts or ends</dd>
+    <dt>Double-click a segment</dt><dd>Play it and type</dd>
+  </dl>
+  <form method="dialog"><button class="small">Close</button></form>
+</dialog>
+
+<script type="module" src="/static/annotate.js"></script>
+</body></html>

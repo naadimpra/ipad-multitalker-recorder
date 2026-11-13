@@ -12,6 +12,8 @@ your own machine.
   to the sample and each iPad's clock drift is corrected.
 - **Optional labels**: a distraction-free participant screen where people tap an emotion while they speak.
 - **Tools**: align and merge tracks, draft speech and overlap regions, attach labels to speech segments.
+- **Transcribe**: a browser page with a playable waveform per speaker, where you type what was said in
+  three scripts (漢字, よみがな, romaji) and mark the pitch accent of every mora.
 
 | Mode | Hardware | Output |
 |---|---|---|
@@ -135,12 +137,132 @@ Labels are saved per device in `session.json` as an emotion plus an audio frame 
 If the server crashed mid-session, rebuild the WAVs from the raw files with
 `python -m tools.common recordings/<session>`.
 
+## Transcribing
+
+A browser page for writing down what each speaker said, next to a playable waveform of their own microphone.
+
+![The transcription page: one waveform per speaker at the top, and below it the speech segments with their four lines](docs/annotate-editor.png)
+
+### Starting it from the command line
+
+```bash
+.venv/bin/python -m tools.annotate recordings/<session>    # open one session
+.venv/bin/python -m tools.annotate                         # list the sessions in recordings/ and pick one
+.venv/bin/python -m tools.annotate /path/to/sessions       # the same, for sessions kept in another folder
+```
+
+The command prints the address, opens it in your browser (`http://127.0.0.1:8765/annotate`) and keeps
+running until you press Ctrl+C. It runs on the laptop only and needs no certificate and no iPads.
+
+| Option | What it does |
+|---|---|
+| `--port 9000` | use another port (default 8765), for example when 8765 is already in use |
+| `--no-open` | do not open the browser; open the printed address yourself |
+
+For a session with several devices, align it first so that every speaker is on the same timeline and
+Auto-segment can tell the speakers apart:
+
+```bash
+.venv/bin/python -m tools.align      recordings/<session>
+.venv/bin/python -m tools.draft_rttm recordings/<session>
+.venv/bin/python -m tools.annotate   recordings/<session>
+```
+
+The よみ and romaji drafts need the `fugashi` and `unidic-lite` packages (about 250 MB). They are in
+`requirements.txt`; if your `.venv` is older than this page, run `.venv/bin/pip install -r requirements.txt`
+again. Without them the page still works and you type the よみ yourself.
+
+While the recording server is running you do not need the command: the same page is at
+`https://<laptop-ip>:8443/annotate`, and the start page has a **Transcribe** button.
+
+### The four lines
+
+The page shows one waveform per device and, below it, the list of speech segments. Each segment has four
+lines:
+
+![One segment: the text, its reading with ＊ after the devoiced morae, one pitch box per mora, and the romaji](docs/annotate-lines.png)
+
+| Line | What goes in it | Example |
+|---|---|---|
+| **漢字** | what was said, as normally written | 学生でした。 |
+| **よみ** | the reading in hiragana, with a space between words; `＊` after a mora marks a devoiced vowel | がく＊せい でし＊た。 |
+| **高低** | pitch accent, one box per mora of the よみ: `L` low, `H` high, `D` devoiced (and low) | `LDHH HDL` |
+| **Romaji** | Hepburn, long vowels spelled out; a devoiced vowel is a capital | gakUsei deshIta. |
+
+You only type the first line. When you leave it, the よみ and romaji lines are drafted for you, and you
+correct them where the reading is wrong (names and words like 私 or 日本 are common cases). A line you
+corrected by hand is not overwritten when you edit the text again; **↻ よみ** rewrites both lines on purpose.
+Correcting the よみ line updates the romaji. A line gets an orange edge when something is left over in it
+(kanji or digits in the よみ, non-Latin characters in the romaji). Switch **よみ・Romaji** off in the toolbar to
+type plain text only, for example for English.
+
+The pitch line is filled in by hand. It always has exactly as many boxes as the よみ has morae (きょ, ん, っ and
+ー each count as one). Click a box to step through L → H → D, or put the cursor in the line and type the
+letters one after another (`LHHLL…`); ← and → move between morae. High boxes sit high and low boxes sit low,
+so the line reads as the pitch contour. When you edit the よみ, the morae that did not change keep their
+marks and new ones start empty (saved as `_`).
+
+Devoicing is one fact written three ways, and the page keeps them in step: `＊` in the よみ, `D` in the pitch
+line, a capital vowel in the romaji. Set any one of them and the other two follow, as long as the romaji is
+still the automatic draft.
+
+### Working through a session
+
+1. **Auto-segment** marks the speech in every track that has no segments yet. It uses `aligned/utterances.tsv`
+   if you ran `tools.utterances`, else `aligned/draft.rttm`, else the pauses in each track. For several
+   speakers, run `tools.align` and `tools.draft_rttm` first: pauses alone cannot tell a speaker from the
+   neighbour's voice in their microphone.
+2. Fix the segments on the waveform: drag an edge to move it, drag on empty space to add one, and use
+   **Split**, **Merge ↓** and **Delete** in the list. **Undo** takes back any of these.
+3. Type. **Enter** goes to the next segment and plays it, **Esc** pauses or replays the current one. The
+   **Shortcuts** button lists the rest.
+
+With several devices, clicking a segment plays that speaker's own microphone; **Mix** plays everyone.
+
+### Emotions
+
+Every segment has one emotion. It starts as the emotion the speaker had tapped during most of the segment
+while recording, or Neutral when nothing was tapped, and you can change it:
+
+- pick another one from the list in the segment's row, or
+- select the segment and press **1** to **8** (the order of the list, which is the order in
+  `static/emotions.js`).
+
+On the waveform a segment is drawn in the colour of its emotion from its start to its end: a solid span with
+the emotion's name in the band above the waveform, and a lighter fill over the waveform itself. When the
+emotion changes inside a segment, **Split** it there and set the two halves.
+
+What the participant tapped is never rewritten. It stays in `session.json` (and `aligned/emotions.tsv`) and
+shows as a thin strip along the bottom of the lane, so you can compare it with the labels you set.
+
+### What it saves
+
+Everything is saved as you type, in `aligned/` if the session is aligned and in the session folder otherwise:
+
+- `transcript.tsv`: `speaker, device, start_s, end_s, dur_s, emotion, text, kana, pitch, romaji`. The columns
+  of `utterances.tsv` plus the four lines; `emotion` is the segment's emotion as set on the page. `pitch` has
+  one letter per mora, grouped like the words in `kana`.
+- `transcript.json`: the same segments, which the page loads again next time.
+
+Align a session before you transcribe it. A transcript made on the unaligned tracks stays in the session
+folder and is not moved onto the aligned timeline.
+
+To see the drafted よみ and romaji for a sentence without opening the page:
+
+```bash
+.venv/bin/python -m tools.reading "今日は東京へ行きます。"
+# きょう は とうきょう へ いきます。
+# kyou wa toukyou e ikimasu.
+```
+
 ## Project layout
 
 ```
 server.py        FastAPI + WebSocket server: receives audio, runs sessions
-static/          recorder page (/record), admin page (/control), shared assets
-tools/           post-processing: align, combine, draft_rttm, utterances
+static/          recorder page (/record), admin page (/control), transcription page (/annotate), shared assets
+tools/           post-processing: align, combine, draft_rttm, utterances;
+                 transcription: annotate (page backend), reading (よみがな and romaji drafts)
+docs/            screenshots used in this README
 make_cert.sh     local HTTPS certificate for the laptop's IP
 ```
 
