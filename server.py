@@ -3,6 +3,7 @@
 Run:  python server.py            (HTTPS on :8443, CA-download helper on :8080)
 iPads open   https://<laptop-ip>:8443/record
 Admin opens  https://<laptop-ip>:8443/control
+Afterwards   https://<laptop-ip>:8443/annotate   (transcribe; also: python -m tools.annotate)
 """
 from __future__ import annotations
 
@@ -25,6 +26,7 @@ from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 
+from tools.annotate import make_router as annotate_router
 from tools.common import raw_to_wav
 
 ROOT = Path(__file__).parent
@@ -341,6 +343,9 @@ def control_page():
     return FileResponse(STATIC / "control.html")
 
 
+app.include_router(annotate_router(lambda: REC_DIR))  # /annotate: transcribe finished sessions
+
+
 # ---------------- WebSocket ----------------
 @app.websocket("/ws")
 async def ws_endpoint(ws: WebSocket):
@@ -532,6 +537,7 @@ async def main():
     ip = lan_ip()
     print(f"\n  Recorders : https://{ip}:{ARGS.port}/record")
     print(f"  Control   : https://{ip}:{ARGS.port}/control")
+    print(f"  Transcribe: https://{ip}:{ARGS.port}/annotate")
     print(f"  Cert setup: http://{ip}:{ARGS.http_port}/   (first time on each device)\n")
     servers = [
         uvicorn.Server(uvicorn.Config(app, host="0.0.0.0", port=ARGS.port, ssl_certfile=str(cert),
