@@ -7,6 +7,12 @@ For each device it finds the start and end chirp by matched filtering, then
   * offset = start chirp position -> trim / pad
 and writes recordings/<session>/aligned/<label>.wav (all same length, same t=0),
 alignment.json and markers.tsv (admin markers on the aligned timeline).
+
+AI agent devices that record more than one kind of channel (session.json "channel_names", e.g. the
+laptop loopback ["ai", "mic"] or the API-scenario iPad ["mic", "ai"]) are split: aligned/<label>.wav
+is the clean AI channel, aligned/<label>_mic.wav the microphone. The chirp is found on the
+"chirp_channel", and the small playback delay between the AI channel and the mic is measured and removed.
+AI turns (and what the AI heard) are written to aligned/ai_timeline.tsv for tools.ai_transcript.
 """
 from __future__ import annotations
 
@@ -25,7 +31,8 @@ from tools.common import chirp, load_session
 BLOCK = 48000 * 10
 
 
-def find_chirp(path: Path, sr: int, start_s: float, end_s: float) -> tuple[int | None, float]:
+def find_chirp(path: Path, sr: int, start_s: float, end_s: float,
+               channel: int | None = None) -> tuple[int | None, float]:
     """Return (sample index of chirp onset, confidence) within [start_s, end_s)."""
     info = sf.info(str(path))
     a = max(0, int(start_s * sr))
@@ -33,7 +40,7 @@ def find_chirp(path: Path, sr: int, start_s: float, end_s: float) -> tuple[int |
     if b - a < len(chirp(sr)) * 2:
         return None, 0.0
     x, _ = sf.read(str(path), start=a, stop=b, dtype="float64", always_2d=True)
-    x = x.mean(axis=1)
+    x = x[:, channel] if channel is not None and channel < x.shape[1] else x.mean(axis=1)
     c = chirp(sr).astype(np.float64)
     corr = fftconvolve(x, c[::-1], mode="valid")
     env = np.abs(hilbert(corr))
@@ -44,6 +51,106 @@ def find_chirp(path: Path, sr: int, start_s: float, end_s: float) -> tuple[int |
     score = env / np.sqrt(np.dot(c, c) * local + 1e-12)
     i = int(np.argmax(score))
     return a + i, float(score[i])
+
+
+def gcc_phat_lag(a: np.ndarray, b: np.ndarray, max_lag: int) -> tuple[int, float]:
+    """Delay of b relative to a in samples (positive: b is later), and peak sharpness."""
+    n = 1 << int(np.ceil(np.log2(len(a) + len(b))))
+    A, B = np.fft.rfft(a, n), np.fft.rfft(b, n)
+    R = B * np.conj(A)
+    cc = np.fft.irfft(R / (np.abs(R) + 1e-12), n)
+    cc = np.concatenate([cc[-max_lag:], cc[: max_lag + 1]])
+    i = int(np.argmax(np.abs(cc)))
+    return i - max_lag, float(np.abs(cc[i]) / (np.mean(np.abs(cc)) + 1e-12))
+
+
+def split_ai_device(src: Path, out_dir: Path, key: str, names: list[str], sr: int,
+                    warnings: list[str]) -> int:
+    """Split an aligned AI device file into <key>.wav (AI channel) and <key>_<name>.wav (the others).
+
+    The AI channel is what was sent to the speaker; the mic hears it a little later (output + input
+    latency, typically 10-60 ms). That delay is measured where the AI talks and removed, so the AI
+    channel lines up with the sound in the room. Returns the delay in samples."""
+    ai = names.index("ai")
+    mic = next((i for i, n in enumerate(names) if n.startswith("mic")), None)
+    info = sf.info(str(src))
+    lag = 0
+    if mic is not None:
+        win = 5 * sr
+        energy = []   # (ai energy, block start) per 5 s block
+        for k, blk in enumerate(sf.blocks(str(src), blocksize=win, dtype="float32", always_2d=True)):
+            energy.append((float(np.mean(blk[:, ai] ** 2)), k * win))
+        lags = []
+        for e, start in sorted(energy, reverse=True)[:5]:
+            if e < 1e-6:     # -60 dBFS: the AI is silent here
+                break
+            x, _ = sf.read(str(src), start=start, stop=start + win, dtype="float64", always_2d=True)
+            lg, sharp = gcc_phat_lag(x[:, ai], x[:, mic], int(0.5 * sr))
+            if sharp > 8:
+                lags.append(lg)
+        if lags:
+            lag = int(np.median(lags))
+            print(f"  {key:8s} AI channel vs mic: {lag / sr * 1000:+.1f} ms (from {len(lags)} windows) — corrected")
+        else:
+            warnings.append(f"{key}: could not measure the AI-to-mic delay (AI never audible on the mic?) — "
+                            "AI channel left uncorrected (error is usually under 60 ms)")
+    outs = {i: sf.SoundFile(str(out_dir / (f"{key}.wav" if i == ai else f"{key}_{names[i]}.wav")), "w",
+                            samplerate=sr, channels=1, subtype="PCM_24") for i in range(len(names))}
+    try:
+        pending = np.zeros(max(lag, 0), np.float32)   # AI channel delayed by `lag` (advanced if negative)
+        skip, written = max(-lag, 0), 0
+        for blk in sf.blocks(str(src), blocksize=BLOCK, dtype="float32", always_2d=True):
+            for i, f in outs.items():
+                if i != ai:
+                    f.write(blk[:, i])
+            a = blk[:, ai]
+            if skip:
+                d = min(skip, len(a))
+                a, skip = a[d:], skip - d
+            pending = np.concatenate([pending, a])
+            n = min(len(pending), info.frames - written)
+            outs[ai].write(pending[:n])
+            written, pending = written + n, pending[n:]
+        if written < info.frames:
+            outs[ai].write(np.zeros(info.frames - written, np.float32))
+    finally:
+        for f in outs.values():
+            f.close()
+    src.unlink()
+    assert sf.info(str(out_dir / f"{key}.wav")).frames == info.frames
+    return lag
+
+
+def ai_timeline(meta: dict, devs: dict, plan: dict, sr_out: int, t_lo: float, total_s: float,
+                start_chirp_aligned: float, chirp_srv: float | None, out_dir: Path) -> None:
+    """aligned/ai_timeline.tsv: when the AI spoke (from the AI iPad's playback frames) and what it heard."""
+    ai = meta.get("ai") or {}
+    key = ai.get("device")
+    if ai.get("scenario") != "api" or key not in plan:
+        return
+    p = plan[key]
+    t_of = lambda f: (p["out0"] + f / p["rate"] * sr_out - t_lo) / sr_out
+    t_srv = lambda ms: start_chirp_aligned + (ms - chirp_srv) / 1000 if chirp_srv is not None and ms else None
+    lag_s = p.get("ai_lag", 0) / sr_out
+    rows = []
+    for t in devs[key].get("ai_turns") or []:
+        if t.get("start_frame") is None or t.get("end_frame") is None:
+            continue
+        rows.append(("play", t["turn"], t_of(t["start_frame"]) + lag_s, t_of(t["end_frame"]) + lag_s, "frames"))
+    for i, h in enumerate(ai.get("heard") or []):
+        if h.get("frame_start") is not None and h.get("frame_end") is not None:
+            rows.append(("heard", str(i), t_of(h["frame_start"]), t_of(h["frame_end"]), "frames"))
+        else:  # only the time the transcript arrived is known
+            t = t_srv(h.get("server_ms"))
+            if t is not None:
+                rows.append(("heard", str(i), t, t, "arrival"))
+    rows = [r for r in rows if r[3] >= 0 and r[2] <= total_s]
+    with open(out_dir / "ai_timeline.tsv", "w") as f:
+        f.write("kind\tid\tstart_s\tend_s\ttiming\n")
+        for kind, rid, a, b, how in sorted(rows, key=lambda r: r[2]):
+            f.write(f"{kind}\t{rid}\t{max(0.0, a):.3f}\t{min(total_s, b):.3f}\t{how}\n")
+    print(f"AI timeline: {sum(r[0] == 'play' for r in rows)} AI turns, "
+          f"{sum(r[0] == 'heard' for r in rows)} heard -> {out_dir / 'ai_timeline.tsv'}")
 
 
 def main() -> None:
@@ -84,7 +191,7 @@ def main() -> None:
                                    ("end", (max(dur / 2, dur - args.search), dur))):
             exp = (chirp_ms[which] - t0) / 1000 if which in chirp_ms and t0 else None
             win = (exp - args.tol, exp + args.tol) if exp is not None else default_win
-            pos, conf = find_chirp(p, sr, *win)
+            pos, conf = find_chirp(p, sr, *win, channel=d.get("chirp_channel"))
             ok = pos is not None and conf >= args.min_conf
             if not ok:
                 warnings.append(f"{key}: {which} chirp NOT found (best score {conf:.3f}, need {args.min_conf}) "
@@ -143,10 +250,13 @@ def main() -> None:
     out_dir.mkdir(exist_ok=True)
     for key, p in plan.items():
         d, info = devs[key], sf.info(str(sdir / devs[key]["wav_file"]))
+        names = d.get("channel_names") or []
+        split = "ai" in names and len(names) == info.channels and len(names) > 1
         skip = int(round(t_lo - p["out0"]))  # output samples to drop at the start (may be negative = pad)
         rs = soxr.ResampleStream(p["rate"], sr_out, info.channels, dtype="float32", quality="HQ")
         written = 0
-        with sf.SoundFile(str(out_dir / f"{key}.wav"), "w", samplerate=sr_out, channels=info.channels,
+        target = out_dir / (f"{key}.__all.wav" if split else f"{key}.wav")
+        with sf.SoundFile(str(target), "w", samplerate=sr_out, channels=info.channels,
                           subtype="PCM_24") as out:
             if skip < 0:
                 out.write(np.zeros((-skip, info.channels), np.float32))
@@ -167,6 +277,8 @@ def main() -> None:
             if written < L:
                 out.write(np.zeros((L - written, info.channels), np.float32))
         print(f"  {key:8s} drift {p['drift_ppm']:+7.1f} ppm  shift {(t_lo - p['out0']) / sr_out * 1000:+8.1f} ms  [{p['method']}]")
+        if split:
+            p["ai_lag"] = split_ai_device(target, out_dir, key, names, sr_out, warnings)
 
     # ---- 3b. emotion labels -> aligned timeline ----
     # A label holds from its frame until the next label (or the end). Frames are positions in
@@ -191,6 +303,7 @@ def main() -> None:
     # ---- 4. metadata + markers on the aligned timeline ----
     start_chirp_aligned = (r["start"] / r["sr"] * sr_out - t_lo) / sr_out
     chirp_srv = next((c["server_ms"] for c in meta.get("chirps", []) if c["label"] == "start" and c["server_ms"]), None)
+    ai_timeline(meta, devs, plan, sr_out, t_lo, total_s, start_chirp_aligned, chirp_srv, out_dir)
     with open(out_dir / "markers.tsv", "w") as f:
         f.write("time_s\tlabel\n")
         if chirp_srv is not None:

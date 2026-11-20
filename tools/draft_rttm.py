@@ -10,12 +10,18 @@ Per 20 ms frame, a speaker is active when their channel is clearly above its
 own noise floor AND within --overlap-db of the loudest channel (so crosstalk
 picked up by other speakers' mics is rejected, but real overlap is kept).
 
+AI agent: a device named "ai" counts as a speaker named "AI". When its clean AI channel exists (laptop
+loopback or API scenario), the AI's speech is taken from that channel directly (exact), and its mic
+(aligned/ai_mic.wav) is used in the comparison above, so the AI's voice leaking into the participants'
+mics is rejected like any other crosstalk.
+
 Overlap = 2+ speakers active at once for at least --min-overlap seconds, reported as a share of
 speech time (silence excluded). Regions are written to aligned/overlap.tsv.
 """
 from __future__ import annotations
 
 import argparse
+import re
 from pathlib import Path
 
 import numpy as np
@@ -26,6 +32,7 @@ from scipy.signal import butter, sosfilt, sosfilt_zi
 from tools.common import load_session
 
 HOP = 0.02
+AI_RE = re.compile(r"ai([-_0-9][A-Za-z0-9_-]*)?")
 
 
 def frame_energy_db(path: Path, channel: int | None) -> tuple[np.ndarray, int]:
@@ -69,6 +76,8 @@ def main() -> None:
     ap.add_argument("--min-gap", type=float, default=0.30)
     ap.add_argument("--min-overlap", type=float, default=0.10,
                     help="only count overlap where 2+ speakers talk together at least this long (s)")
+    ap.add_argument("--ai-db", type=float, default=-50.0,
+                    help="clean AI channel: level (dBFS) above which the AI counts as speaking")
     args = ap.parse_args()
 
     sdir: Path = args.session
@@ -78,10 +87,21 @@ def main() -> None:
         raise SystemExit("Run python -m tools.align first.")
 
     chans: list[tuple[str, Path, int | None]] = []  # (speaker name, file, channel)
+    clean_ai: dict[int, Path] = {}                    # chans index -> clean AI channel file
     for key in sorted(meta["devices"]):
         d = meta["devices"][key]
         f = adir / f"{key}.wav"
-        if key not in ("center", "lav") and f.exists():
+        if key in ("center", "lav") or not f.exists():
+            continue
+        if AI_RE.fullmatch(key):
+            name = d.get("speaker_id") or ("AI" if key == "ai" else key.upper())
+            mic = adir / f"{key}_mic.wav"
+            if "ai" in (d.get("channel_names") or []) and mic.exists():
+                clean_ai[len(chans)] = f
+                chans.append((name, mic, None))
+            else:
+                chans.append((name, f, None))
+        else:
             chans.append((d.get("speaker_id") or key, f, None))
     if not chans and (adir / "lav.wav").exists():
         nch = sf.info(str(adir / "lav.wav")).channels
@@ -98,6 +118,10 @@ def main() -> None:
     snr = E - np.percentile(E, 10, axis=1, keepdims=True)  # normalise per-channel gain
     loudest = snr.max(axis=0, keepdims=True)
     active = (snr > args.snr_db) & (snr >= loudest - args.overlap_db)
+    for i, f in clean_ai.items():
+        # digital AI channel: silence is true silence, so a fixed level is an exact voice detector
+        e = frame_energy_db(f, None)[0][:n]
+        active[i] = np.pad(e, (0, n - len(e)), constant_values=-120) > args.ai_db
     active = median_filter(active.astype(np.uint8), size=(1, 7)) > 0
 
     sid = meta["session_id"]

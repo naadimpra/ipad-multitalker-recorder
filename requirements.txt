@@ -4,3 +4,4 @@ numpy>=1.26
 soundfile>=0.12
 scipy>=1.11
 soxr>=0.3
+websockets>=12     # AI agent API bridge
