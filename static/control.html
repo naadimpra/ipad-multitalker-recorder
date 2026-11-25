@@ -20,6 +20,11 @@
       <button class="ghost small" id="notesBtn" style="margin-left:auto">＋ Note</button>
     </div>
     <textarea id="notes" rows="2" placeholder="Notes" hidden></textarea>
+    <div class="row"><span class="muted">AI agent</span>
+      <div class="seg" id="aiScen" style="margin-left:auto"><button data-ai="none" class="on">None</button><button data-ai="room">Room</button><button data-ai="laptop">Laptop</button><button data-ai="api">API</button></div></div>
+    <input id="aiAgent" placeholder="Which agent? (e.g. ChatGPT voice, Gemini Live)" autocomplete="off" hidden>
+    <select id="aiProvider" hidden></select>
+    <p id="aiHint" class="muted" style="margin:0" hidden></p>
   </div>
 
   <div class="slide" id="slideStart" role="button" tabindex="0" aria-label="Slide to start recording">
@@ -42,6 +47,16 @@
     <span class="switch"><input type="checkbox" id="rotAll"><i></i></span></label>
   <div class="row"><span class="grow muted" id="armCount"></span>
     <button class="ghost small" id="disarmAll">Disarm all</button></div>
+</section>
+
+<section class="card group" id="aiCard" hidden>
+  <div class="row"><span class="grow">AI agent <span class="muted" id="aiName"></span></span><span class="flag" id="aiState"></span></div>
+  <p class="muted" id="aiLast" style="margin:8px 0 0"></p>
+  <p class="muted" id="aiHeard" style="margin:4px 0 0"></p>
+  <p class="muted" id="aiErr" style="margin:4px 0 0;color:var(--bad)"></p>
+  <label class="row" id="aiMuteRow"><span class="grow">Mute (AI stops hearing the room)</span>
+    <span class="switch"><input type="checkbox" id="aiMute"><i></i></span></label>
+  <div class="row" id="aiBtns"><span class="grow"></span><button class="ghost small" id="aiInterrupt">Interrupt AI</button></div>
 </section>
 
 <section id="devices"></section>

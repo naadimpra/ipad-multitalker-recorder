@@ -12,8 +12,13 @@ your own machine.
   to the sample and each iPad's clock drift is corrected.
 - **Optional labels**: a distraction-free participant screen where people tap an emotion while they speak.
 - **Tools**: align and merge tracks, draft speech and overlap regions, attach labels to speech segments.
+<<<<<<< HEAD
+- **Optional AI participant**: include a voice AI (ChatGPT, Gemini Live or any other) in the conversation
+  and record its voice and what it said on the same timeline.
+=======
 - **Transcribe**: a browser page with a playable waveform per speaker, where you type what was said in
   three scripts (漢字, よみがな, romaji) and mark the pitch accent of every mora.
+>>>>>>> main
 
 | Mode | Hardware | Output |
 |---|---|---|
@@ -22,7 +27,8 @@ your own machine.
 
 The number of devices is not fixed. Each iPad gets a **device name** you type (or pick from the quick chips S1–S4,
 Center, Lav). Names are free text (letters, digits, `-`, `_`) and become the file names, so `spk1`, `alice` or
-`table-left` all work. `center` and `lav` are treated as room/receiver mics; every other name is a speaker iPad.
+`table-left` all work. `center` and `lav` are treated as room/receiver mics, `ai` (or `ai2`, `ai-gemini`, …) as
+the AI agent's track, and every other name is a speaker iPad.
 
 ## Requirements
 
@@ -111,12 +117,89 @@ No device settings are shown. The layout adapts to the orientation (4 × 2 in la
 
 Labels are saved per device in `session.json` as an emotion plus an audio frame position.
 
+## AI agent in the conversation (optional)
+
+A voice AI can take part in the conversation as one more participant. Pick how it joins under **AI agent** on
+the admin page before you slide to start. Each option records its audio as the device `ai`, so it is aligned
+like every other track.
+
+| Option | The AI runs on | What is recorded | AI text | Works with |
+|---|---|---|---|---|
+| **Room** | its own app on a phone or speaker at the table | an iPad named `ai` next to its speaker (room sound) | transcribed afterwards | any agent |
+| **Laptop** | the laptop (browser or desktop app) | the laptop's sound output, digitally, plus the laptop mic | transcribed afterwards | any agent with a web or desktop app |
+| **API** | this server, which talks to the AI service | exactly what the AI said, plus the iPad's mic | from the AI service, word for word | OpenAI Realtime, Gemini Live (more via `ai_bridge/`) |
+
+Type which agent and version you use (e.g. "ChatGPT voice, app 1.2025.xxx") in the box that appears. It is
+saved in `session.json`.
+
+**Room**: start the agent's own voice mode (ChatGPT, Gemini Live, …) on a phone or tablet in the middle of the
+table, with the volume fixed. Put an iPad named **AI** (quick chip) 20–30 cm from its speaker and arm it as
+usual. Nothing else is needed. The AI track also picks up the people nearby, and the consumer app applies its
+own echo cancellation and turn-taking, which you can't control.
+
+**Laptop**: the AI's sound is taken before it reaches the speaker, so the AI track has no room noise.
+1. Install [BlackHole 2ch](https://github.com/ExistentialAudio/BlackHole) and the extras:
+   `.venv/bin/pip install -r requirements-ai.txt`.
+2. Audio MIDI Setup → **+** → *Create Multi-Output Device* with your speakers + BlackHole 2ch. Make it the
+   system output, so you still hear the AI and BlackHole gets a copy.
+3. Audio MIDI Setup → **+** → *Create Aggregate Device* with BlackHole 2ch + the built-in microphone (tick *Drift
+   Correction* on the mic). Inputs 1–2 are then BlackHole and input 3 is the mic.
+4. With `server.py` running, in a second terminal:
+   ```bash
+   .venv/bin/python -m tools.loopback --list
+   .venv/bin/python -m tools.loopback --device "Aggregate Device" --ai-ch 1,2 --mic-ch 3
+   ```
+   It appears on the admin page as `ai` (*laptop loopback*) and starts and stops with every session.
+5. Open the agent (chatgpt.com voice mode, gemini.google.com Live, a desktop app, …) on the laptop and let it
+   use the laptop mic, or a mic in the middle of the table. Keep the laptop near the admin device so its mic
+   hears the sync chirp.
+
+**API**: the server connects to the AI service itself. An iPad named **AI** is the AI's mouth and ear: it
+plays the AI's voice through its speaker and sends its mic to the AI. It records two channels: its mic, and the
+exact audio it played, sample for sample. You get a clean AI track, the AI's own transcript of every turn, and
+what it understood the participants said.
+1. Get an API key and set it in the terminal that runs the server, then start it:
+   ```bash
+   export OPENAI_API_KEY=sk-...      # ChatGPT voice (OpenAI Realtime API)
+   export GEMINI_API_KEY=...         # Gemini Live (Google AI Studio)
+   .venv/bin/python server.py
+   ```
+   API use is billed per minute of audio to that key.
+2. Choose the model, voice and the AI's instructions (its system prompt) in `ai_agents.json`. The instructions
+   and settings are saved in `session.json` for each session. Model names change over time, so check the
+   provider's docs if a connection fails.
+3. On the admin page choose **AI agent → API** and the provider. The **AI agent** card shows what the AI is
+   doing, its last sentence and what it heard. **Mute** stops it hearing the room, and **Interrupt AI** cuts it off.
+   Both are logged.
+4. While the AI talks, the iPad sends silence to the AI so it doesn't hear itself through its own speaker.
+   As a result, people cannot interrupt it by talking (use **Interrupt AI**). Set `"barge_in": true` in
+   `ai_agents.json` to let people talk over it. That only works well with good echo handling, e.g. headphones on
+   the AI iPad's output or a speaker some distance from the AI iPad.
+
+To support another realtime voice API, add an adapter to `ai_bridge/` (see `ai_bridge/base.py`). Any agent
+without an API can still join with **Room** or **Laptop**.
+
+**Results** (after `tools.align`): `aligned/ai.wav` is the AI's voice. For Laptop and API it is the clean
+digital channel, and the mic is kept as `aligned/ai_mic.wav`. `align` measures the delay between the
+played sound and the mic (typically 10–60 ms) and removes it. `draft_rttm` labels the AI as speaker `AI`, so
+`overlap.tsv` includes people talking over the AI. Then:
+
+```bash
+.venv/bin/python -m tools.ai_transcript recordings/<session>   # what the AI said (and heard), when
+```
+
+writes `aligned/ai_turns.tsv` (`role, start_s, end_s, text, source`). With API it uses the service's own
+transcripts and the exact moments each turn was played. With Room/Laptop it transcribes `ai.wav` with
+faster-whisper (`--whisper small|medium|large-v3`, `--language ja`). The API scenario also writes every event
+the service sent to `recordings/<session>/ai_events.jsonl`.
+
 ## Post-processing
 
 ```bash
 .venv/bin/python -m tools.align      recordings/<session>   # align tracks, correct clock drift
 .venv/bin/python -m tools.draft_rttm recordings/<session>   # draft speech + overlap regions
 .venv/bin/python -m tools.utterances recordings/<session>   # attach labels to speech segments
+.venv/bin/python -m tools.ai_transcript recordings/<session> # only with an AI agent: its turns + text
 ```
 
 - **`align`** finds the start and end chirp in every track, corrects each iPad's clock drift (typically
@@ -259,10 +342,18 @@ To see the drafted よみ and romaji for a sentence without opening the page:
 
 ```
 server.py        FastAPI + WebSocket server: receives audio, runs sessions
+<<<<<<< HEAD
+static/          recorder page (/record), admin page (/control), shared assets
+tools/           post-processing: align, combine, draft_rttm, utterances, ai_transcript;
+                 loopback.py records an AI agent running on the laptop
+ai_bridge/       AI agent API bridge (OpenAI Realtime, Gemini Live adapters)
+ai_agents.json   AI agent models, voices and instructions
+=======
 static/          recorder page (/record), admin page (/control), transcription page (/annotate), shared assets
 tools/           post-processing: align, combine, draft_rttm, utterances;
                  transcription: annotate (page backend), reading (よみがな and romaji drafts)
 docs/            screenshots used in this README
+>>>>>>> main
 make_cert.sh     local HTTPS certificate for the laptop's IP
 ```
 

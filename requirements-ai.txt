@@ -1,0 +1,4 @@
+# Optional extras for the AI-agent scenarios (not needed for plain recording).
+-r requirements.txt
+sounddevice>=0.4      # tools/loopback.py (laptop scenario)
+faster-whisper>=1.0   # tools/ai_transcript.py for the room / laptop scenarios (transcribes the AI track)

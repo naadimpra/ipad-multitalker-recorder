@@ -18,7 +18,8 @@ catch { tabId = rand().slice(0, 8); }
 const deviceId = `${baseId}-${tabId}`;
 $("label").value = store.get("label") || "spk1";
 const cleanLabel = (s) => String(s || "").replace(/[^A-Za-z0-9_-]+/g, "").slice(0, 24);
-const POS = [["spk1", "S1"], ["spk2", "S2"], ["spk3", "S3"], ["spk4", "S4"], ["center", "Center"], ["lav", "Lav"]];
+const POS = [["spk1", "S1"], ["spk2", "S2"], ["spk3", "S3"], ["spk4", "S4"], ["center", "Center"], ["lav", "Lav"], ["ai", "AI"]];
+const isAiLabel = (l) => /^ai([-_0-9][A-Za-z0-9_-]*)?$/.test(l || "");
 function renderChips() { for (const b of $("posChips").children) b.classList.toggle("on", b.dataset.pos === $("label").value); }
 for (const [v, t] of POS) {
   const b = document.createElement("button");
@@ -31,8 +32,8 @@ $("speaker").value = store.get("speaker") || "";
 
 const clock = new Clock();
 let ws = null;
-let ctx = null, stream = null, node = null, wakeLock = null;
-let armed = false, channels = 0, sampleRate = 0;
+let ctx = null, stream = null, node = null, wakeLock = null, outGain = null;
+let armed = false, channels = 0, sampleRate = 0, micCh = 0;
 let problem = "";
 let micLabel = "";
 
@@ -59,7 +60,7 @@ function connect() {
     pump();
     checkFinished();
   };
-  ws.onmessage = (e) => handle(JSON.parse(e.data));
+  ws.onmessage = (e) => (typeof e.data === "string" ? handle(JSON.parse(e.data)) : onAiAudio(e.data));
   ws.onclose = () => setTimeout(connect, 1000);
   ws.onerror = () => ws.close();
 }
@@ -69,7 +70,8 @@ function handle(m) {
     case "pong": clock.onPong(m); break;
     case "ack": queue.delete(m.seq); checkFinished(); break;
     case "saved": if (rec && rec.sid === m.sid) showReview(m); break;
-    case "start": hideReview(); startRec(m.sid); break;
+    case "start": hideReview(); startRec(m.sid, !!m.ai_bridge, !!m.barge_in); break;
+    case "ai_clear": if (node) node.port.postMessage({ type: "clear" }); break;
     case "stop": if (rec && rec.sid === m.sid) stopRec(); break;
     case "resume":
       if (rec && rec.sid === m.sid) {
@@ -108,21 +110,75 @@ function pump() {
 }
 
 // ---------------- recording ----------------
-function startRec(sid) {
+// ai: this iPad is the AI agent's voice (API scenario). It plays the AI and records it as an extra channel.
+function startRec(sid, ai = false, bargeIn = false) {
   if (!armed || !ctx || ctx.state !== "running") {
     problem = "Start received but microphone not armed/running!";
     return;
   }
   problem = "";
   rec = { sid, framesSent: 0, pend: [], pendFrames: 0, stopped: false, finishedSent: false,
-          t0: null, events: [], emotions: [], startedPerf: performance.now() };
+          t0: null, events: [], emotions: [], startedPerf: performance.now(),
+          ch: micCh + (ai ? 1 : 0), ai, bargeIn, aiTurns: [], aiOpen: new Map(), aiActive: false };
+  if (ai) setAiMode(true);
   logEmotion(emotion); // every recording starts with an emotion label at frame 0
 }
 
 function stopRec() {
   rec.stopped = true;
   flush();
+  if (rec.ai) {
+    setAiMode(false);
+    for (const [turn, start] of rec.aiOpen) closeAiTurn(turn, start, rec.framesSent);
+    rec.aiOpen.clear();
+  }
   checkFinished();
+}
+
+// ---------------- AI agent (API scenario) ----------------
+function setAiMode(on) {
+  if (!node) return;
+  node.port.postMessage({ type: "ai", on });
+  if (outGain) outGain.gain.value = on ? 1 : 0;  // the worklet's output is the AI's voice
+}
+
+// AI audio from the server: [u32 header length][JSON {turn}][float32 samples at this iPad's rate]
+function onAiAudio(buf) {
+  if (!node || !rec || !rec.ai || rec.stopped) return;
+  const hlen = new DataView(buf).getUint32(0, true);
+  const hdr = JSON.parse(new TextDecoder().decode(new Uint8Array(buf, 4, hlen)));
+  const data = new Float32Array(buf.slice(4 + hlen));
+  node.port.postMessage({ type: "play", turn: hdr.turn, data }, [data.buffer]);
+}
+
+function closeAiTurn(turn, start, end) {
+  const t = { turn, start_frame: start, end_frame: end };
+  rec.aiTurns.push(t);
+  if (ws && ws.readyState === 1) ws.send(JSON.stringify({ type: "ai_turn", sid: rec.sid, ...t }));
+}
+
+// Turn start/end marks from the worklet -> frames of this recording (base = frame of the block's first sample).
+function aiMarks(marks, frame0, base) {
+  for (const mk of marks) {
+    const f = base + (mk.frame - frame0);
+    if (mk.kind === "start") rec.aiOpen.set(mk.turn, rec.aiOpen.get(mk.turn) ?? f);
+    else if (rec.aiOpen.has(mk.turn)) { closeAiTurn(mk.turn, rec.aiOpen.get(mk.turn), f); rec.aiOpen.delete(mk.turn); }
+  }
+}
+
+// The mic goes to the AI live (separate from the archival upload). While the AI is talking the mic is
+// replaced by silence (unless barge-in is on), so the AI does not hear itself through this iPad's speaker.
+function sendAiInput(data, ch, base, aiActive) {
+  if (!ws || ws.readyState !== 1) return;
+  const n = data.length / ch;
+  const mic = new Float32Array(n);
+  if (!(aiActive && !rec.bargeIn)) for (let i = 0; i < n; i++) mic[i] = data[i * ch];
+  const hb = new TextEncoder().encode(JSON.stringify({ kind: "ai_in", sid: rec.sid, frame: base }));
+  const msg = new Uint8Array(4 + hb.length + mic.byteLength);
+  new DataView(msg.buffer).setUint32(0, hb.length, true);
+  msg.set(hb, 4);
+  msg.set(new Uint8Array(mic.buffer), 4 + hb.length);
+  ws.send(msg.buffer);
 }
 
 // ---------------- emotion labels ----------------
@@ -214,7 +270,7 @@ function hideReview() {
 // compare against. If neither works the participant turns it by hand and taps Done.
 let rotOn = false, rotEpoch = 0;
 const rs = { phase: "start", base: null, offset: 0, heading: null, delta: 0, near: 0, ok: false, tickUntil: 0, waitUntil: 0, listening: false };
-const rotSpeaker = () => !["center", "lav"].includes($("label").value);
+const rotSpeaker = () => !["center", "lav"].includes($("label").value) && !isAiLabel($("label").value);
 const norm = (d) => ((d % 360) + 360) % 360;
 // How far iPadOS has auto-rotated the page. The compass works in the iPad's own frame (top edge = mic),
 // but the page turns with auto-rotate, so the mic sits at the top, a side or the bottom of the page.
@@ -337,27 +393,27 @@ function checkFinished() {
   if (!rec || !rec.stopped || rec.finishedSent || queue.size > 0) return;
   if (!ws || ws.readyState !== 1) return;
   ws.send(JSON.stringify({ type: "finished", sid: rec.sid, frames: rec.framesSent, events: rec.events,
-                          emotions: rec.emotions }));
+                          emotions: rec.emotions, ...(rec.ai ? { ai_turns: rec.aiTurns } : {}) }));
   rec.finishedSent = true;
 }
 
 function append(data) {
   if (rec.framesSent === 0 && rec.pendFrames === 0) {
     const now = clock.serverNow();
-    rec.t0 = now == null ? null : now - ((data.length / channels) / sampleRate) * 1000 - (ctx.baseLatency || 0) * 1000;
+    rec.t0 = now == null ? null : now - ((data.length / rec.ch) / sampleRate) * 1000 - (ctx.baseLatency || 0) * 1000;
   }
   rec.pend.push(data);
-  rec.pendFrames += data.length / channels;
+  rec.pendFrames += data.length / rec.ch;
   if (rec.pendFrames >= sampleRate) flush();
 }
 
 function flush() {
   if (!rec || rec.pendFrames === 0) return;
   const n = rec.pendFrames;
-  const pcm = new Float32Array(n * channels);
+  const pcm = new Float32Array(n * rec.ch);
   let o = 0;
   for (const b of rec.pend) { pcm.set(b, o); o += b.length; }
-  const hdr = { sid: rec.sid, seq: seqCounter, start: rec.framesSent, frames: n, ch: channels };
+  const hdr = { sid: rec.sid, seq: seqCounter, start: rec.framesSent, frames: n, ch: rec.ch };
   if (rec.framesSent === 0) hdr.t0_server_ms = rec.t0;
   const hb = new TextEncoder().encode(JSON.stringify(hdr));
   const msg = new Uint8Array(4 + hb.length + pcm.byteLength);
@@ -371,13 +427,24 @@ function flush() {
   pump();
 }
 
-function onBlock({ ch, data }) {
-  channels = ch;
-  let peak = 0, sum = 0;
-  for (let i = 0; i < data.length; i++) { const a = Math.abs(data[i]); sum += a * a; if (a > peak) peak = a; }
-  level.rms = Math.max(level.rms, Math.sqrt(sum / data.length));
+function onBlock({ ch, data, frame0, marks, aiActive }) {
+  channels = micCh || ch;
+  // level of the microphone channels only (an AI iPad's extra channel is the AI's own voice)
+  let peak = 0, sum = 0, cnt = 0;
+  for (let i = 0; i < data.length; i++) {
+    if (i % ch >= channels) continue;
+    const a = Math.abs(data[i]); sum += a * a; cnt++; if (a > peak) peak = a;
+  }
+  level.rms = Math.max(level.rms, Math.sqrt(sum / Math.max(1, cnt)));
   level.peak = Math.max(level.peak, peak);
-  if (rec && !rec.stopped) append(data);
+  if (!rec || rec.stopped || ch !== rec.ch) return;  // blocks from before the AI channel was switched on
+  const base = rec.framesSent + rec.pendFrames;
+  if (rec.ai) {
+    rec.aiActive = aiActive;
+    if (marks && marks.length) aiMarks(marks, frame0, base);
+    sendAiInput(data, ch, base, aiActive);
+  }
+  append(data);
 }
 
 // Audio was interrupted (Siri, call, app switch). Fill the gap with silence
@@ -397,7 +464,7 @@ function onCtxState() {
       const gap = Math.round((gapMs / 1000) * sampleRate);
       rec.events.push({ type: "resumed", frame: rec.framesSent + rec.pendFrames, gap_frames: gap,
                         server_ms: clock.serverNow() });
-      for (let left = gap; left > 0; left -= 4096) append(new Float32Array(Math.min(4096, left) * channels));
+      for (let left = gap; left > 0; left -= 4096) append(new Float32Array(Math.min(4096, left) * rec.ch));
     }
   }
 }
@@ -447,10 +514,10 @@ async function buildGraph(track, trackCh) {
         channelCount: trackCh, channelCountMode: "explicit", channelInterpretation: "discrete",
       });
       c.createMediaStreamSource(stream).connect(n);
-      const mute = c.createGain();
+      const mute = c.createGain();   // silent, except on the AI iPad while it speaks for the AI
       mute.gain.value = 0;
       n.connect(mute).connect(c.destination);
-      return { ctx: c, node: n };
+      return { ctx: c, node: n, outGain: mute };
     } catch (e) {
       lastErr = e;
       try { if (c) await c.close(); } catch {}
@@ -487,14 +554,14 @@ async function arm() {
     step = "audio engine";
     const track = stream.getAudioTracks()[0];
     const trackCh = track.getSettings().channelCount || 1;
-    ({ ctx, node } = await buildGraph(track, trackCh));
+    ({ ctx, node, outGain } = await buildGraph(track, trackCh));
     node.port.onmessage = (e) => onBlock(e.data);
     step = "start audio";
     await ctx.resume();
     ctx.onstatechange = onCtxState;
     track.onended = () => { problem = "Microphone was taken by another app!"; };
     sampleRate = ctx.sampleRate;
-    channels = trackCh;
+    channels = micCh = trackCh;
     micLabel = track.label || "";
     armed = true;
     await keepAwake();
@@ -518,7 +585,7 @@ async function releaseMic() {
     if (ctx) await ctx.close();
     if (wakeLock) { await wakeLock.release(); wakeLock = null; }
   } catch {}
-  stream = ctx = node = null; sampleRate = 0; channels = 0; micLabel = ""; interruptedAt = null;
+  stream = ctx = node = outGain = null; sampleRate = 0; channels = micCh = 0; micLabel = ""; interruptedAt = null;
   if (/^(Audio|Microphone)/.test(problem)) problem = "";
   try { if (navigator.audioSession) navigator.audioSession.type = "auto"; } catch {}
 }
@@ -560,12 +627,15 @@ const fmt = (s) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(
 
 setInterval(() => {
   const recording = !!rec && !rec.stopped;
-  const backlogS = [...queue.values()].reduce((a, q) => a + q.buf.byteLength, 0) / (4 * Math.max(1, channels) * (sampleRate || 48000));
+  const backlogS = [...queue.values()].reduce((a, q) => a + q.buf.byteLength, 0) / (4 * (rec ? rec.ch : Math.max(1, channels)) * (sampleRate || 48000));
   const db = level.rms > 0 ? 20 * Math.log10(level.rms) : -120;
   const pdb = level.peak > 0 ? 20 * Math.log10(level.peak) : -120;
 
   let status = armed ? "Ready" : "Not armed", scls = armed ? "ok" : "";
-  if (recording) { status = `● REC ${fmt((performance.now() - rec.startedPerf) / 1000)}`; scls = "rec"; }
+  if (recording) {
+    status = `● REC ${fmt((performance.now() - rec.startedPerf) / 1000)}`; scls = "rec";
+    if (rec.ai) status += rec.aiActive ? " · AI speaking" : " · AI listening";
+  }
   else if (rec && !rec.finishedSent) status = `Uploading… ${backlogS.toFixed(0)} s left`;
   else if (rec) { status = "Saved ✓"; scls = "ok"; }
   if (problem) { status = `⚠ ${problem}`; scls = "bad"; }
@@ -612,6 +682,7 @@ setInterval(() => {
     ws.send(JSON.stringify({
       type: "status", ...describe(), ctx: ctx ? ctx.state : null, hidden: document.hidden,
       level_db: db, peak_db: pdb, rtt_ms: clock.rtt, offset_ms: clock.offset,
+      ai_speaking: !!(rec && rec.ai && !rec.stopped && rec.aiActive),
       rot_on: rotOn && rotSpeaker(), rot_ok: rs.ok, rot_deg: rs.phase === "track" ? Math.round(rs.delta) : null, backlog_s: backlogS, quiet, emotion, recording, sid: rec ? rec.sid : null, problem,
     }));
   }

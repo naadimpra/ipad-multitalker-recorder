@@ -1,0 +1,22 @@
+{
+  "instructions": "You are taking part in a friendly spoken group conversation with several people sitting around a table. Keep your answers short and natural, like a person in the conversation. Answer in the language the people are speaking.",
+  "barge_in": false,
+  "agents": {
+    "openai": {
+      "title": "ChatGPT (OpenAI Realtime)",
+      "adapter": "openai_realtime",
+      "key_env": "OPENAI_API_KEY",
+      "model": "gpt-realtime",
+      "voice": "marin",
+      "transcribe_model": "gpt-4o-mini-transcribe",
+      "turn_detection": {"type": "server_vad"}
+    },
+    "gemini": {
+      "title": "Gemini Live",
+      "adapter": "gemini_live",
+      "key_env": "GEMINI_API_KEY",
+      "model": "gemini-2.5-flash-native-audio-preview-09-2025",
+      "voice": "Puck"
+    }
+  }
+}

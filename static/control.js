@@ -4,7 +4,14 @@ import { EMOTIONS } from "./emotions.js";
 const BUILD = "__BUILD__"; // replaced by the server
 
 const $ = (id) => document.getElementById(id);
-const POS = [["spk1", "S1"], ["spk2", "S2"], ["spk3", "S3"], ["spk4", "S4"], ["center", "Center"], ["lav", "Lav"]];
+const POS = [["spk1", "S1"], ["spk2", "S2"], ["spk3", "S3"], ["spk4", "S4"], ["center", "Center"], ["lav", "Lav"], ["ai", "AI"]];
+const isAi = (l) => /^ai([-_0-9][A-Za-z0-9_-]*)?$/.test(l || "");
+const AI_HINT = {
+  none: "",
+  room: "Run the agent's own app (ChatGPT, Gemini, …) on a phone or speaker at the table, and put an iPad named \"ai\" right next to its speaker.",
+  laptop: "Run the agent in the laptop's browser or app, and start tools/loopback.py on the laptop. It records the agent's sound directly.",
+  api: "The server talks to the AI service. The iPad named \"ai\" is its speaker and microphone, and records exactly what the AI says.",
+};
 const PRE_CHIRP_S = 1.5; // start chirp plays this long after the session starts
 
 const clock = new Clock();
@@ -17,6 +24,7 @@ const urls = {
 let ws = null;
 let state = null;
 let mode = "B";
+let aiScen = localStorage.getItem("aiScen") || "none";
 let stoppingSince = null;
 let stopBusy = false;
 
@@ -111,6 +119,17 @@ function makeSlide(el, onDone) {
 function preflight() {
   const devs = (state?.devices || []).filter((d) => d.online);
   const issues = [];
+  if (aiScen !== "none") {
+    const ai = devs.filter((d) => isAi(d.label) && d.armed);
+    const loop = ai.filter((d) => d.kind === "loopback");
+    if (aiScen === "laptop" && !loop.length) issues.push("loopback not running");
+    else if ((aiScen === "room" || aiScen === "api") && !ai.some((d) => d.kind !== "loopback")) issues.push("no armed ai iPad");
+    if (aiScen === "api") {
+      const p = (state?.ai_agents || []).find((a) => a.key === $("aiProvider").value);
+      if (!p) issues.push("choose AI provider");
+      else if (!p.ready) issues.push(`${p.title}: no API key`);
+    }
+  }
   // any number of devices: every online device for this mode must be ready
   const mine = devs.filter((d) => (mode === "A" ? d.label === "lav" : d.label !== "lav"));
   if (!mine.some((d) => mode === "A" || isSpk(d.label))) issues.push(mode === "A" ? "lav offline" : "no speaker devices");
@@ -130,7 +149,9 @@ function startSession() {
   const issues = preflight();
   if (issues.length && !confirm(`Problems:\n• ${issues.join("\n• ")}\n\nStart anyway?`)) return;
   playChirp("start", () => send({ type: "chirp", label: "start", server_ms: clock.serverNow() }));
-  send({ type: "start", mode, name: $("name").value, notes: $("notes").value });
+  send({ type: "start", mode, name: $("name").value, notes: $("notes").value,
+         ai: { scenario: aiScen, agent: aiScen === "api" ? ($("aiProvider").selectedOptions[0]?.textContent || "") : $("aiAgent").value,
+               provider: $("aiProvider").value } });
 }
 
 function stopSession() {
@@ -171,6 +192,16 @@ $("force").onclick = () => {
 
 // setup: mode + notes
 for (const b of $("mode").querySelectorAll("button")) b.onclick = () => { mode = b.dataset.mode; render(); };
+for (const b of $("aiScen").querySelectorAll("button")) b.onclick = () => {
+  aiScen = b.dataset.ai; localStorage.setItem("aiScen", aiScen);
+  if (aiScen === "api") send({ type: "ai_agents" });  // re-read ai_agents.json and API keys
+  render();
+};
+$("aiAgent").value = localStorage.getItem("aiAgent") || "";
+$("aiAgent").onchange = () => localStorage.setItem("aiAgent", $("aiAgent").value);
+$("aiProvider").onchange = () => { localStorage.setItem("aiProvider", $("aiProvider").value); render(); };
+$("aiMute").onchange = (e) => send({ type: "ai_mute", on: e.target.checked });
+$("aiInterrupt").onclick = () => send({ type: "ai_interrupt" });
 $("notesBtn").onclick = () => { const t = $("notes"); t.hidden = !t.hidden; if (!t.hidden) t.focus(); };
 
 // all speaker iPads
@@ -184,7 +215,7 @@ const fmt = (s) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(
 const rows = new Map();
 const open = new Set();
 const emoji = (id) => (EMOTIONS.find((x) => x.id === id) || {}).emoji || "";
-const isSpk = (l) => !!l && l !== "center" && l !== "lav";
+const isSpk = (l) => !!l && l !== "center" && l !== "lav" && !isAi(l);
 const posRank = (l) => { const i = POS.findIndex(([v]) => v === l); return i < 0 ? 99 : i; };
 
 function makeRow(d) {
@@ -265,7 +296,9 @@ function flagsFor(d, s) {
     if (d.armed && d.ctx !== "running") f.push([`audio ${d.ctx}`, "bad"]);
     if (d.armed && d.quiet) f.push(["quiet", "warn"]);
     if (d.rot_on) f.push(d.rot_ok ? ["✓ turned", "ok"] : ["not turned", "warn"]);
-    if (state.build && d.build !== state.build) f.push(["old page", "bad"]);
+    if (state.build && d.build !== state.build && d.kind !== "loopback") f.push(["old page", "bad"]);
+    if (d.kind === "loopback") f.push(["laptop loopback", ""]);
+    if (d.ai_speaking) f.push(["AI speaking", "ok"]);
     if (d.problem) f.push(["error", "bad"]);
     if (s && d.armed && !s.members.includes(d.label)) f.push(["not in session", "warn"]);
     if (d.backlog_s > 1.5) f.push([`upload ${d.backlog_s.toFixed(0)}s`, ""]);
@@ -318,7 +351,7 @@ function staleWarnings() {
   if (!state.build) return ["The server is running old code — stop it (Ctrl+C in its terminal) and run python server.py again."];
   if (state.server_stale) out.push("server.py changed since the server started — stop it (Ctrl+C) and run python server.py again.");
   if (BUILD !== state.build) out.push("This admin page is out of date — reload it.");
-  const old = state.devices.filter((d) => d.online && d.build !== state.build).map((d) => d.label);
+  const old = state.devices.filter((d) => d.online && d.build !== state.build && d.kind !== "loopback").map((d) => d.label);
   if (old.length) out.push(`Out-of-date recorder page on: ${old.join(", ")} — reload that iPad's page (close the tab if it persists).`);
   return out;
 }
@@ -370,6 +403,36 @@ function render() {
   $("live").hidden = !recording;
   if (stopping) stoppingSince ??= Date.now(); else stoppingSince = null;
   $("force").hidden = !(stoppingSince && Date.now() - stoppingSince > 15000);
+
+  // AI agent: setup choice + live card
+  for (const b of $("aiScen").querySelectorAll("button")) b.classList.toggle("on", b.dataset.ai === aiScen);
+  $("aiAgent").hidden = !(aiScen === "room" || aiScen === "laptop");
+  const sel = $("aiProvider"), agents = state.ai_agents || [];
+  sel.hidden = aiScen !== "api";
+  const want = agents.map((a) => `${a.key}:${a.ready}`).join(",");
+  if (sel.dataset.sig !== want) {
+    sel.dataset.sig = want;
+    const keep = sel.value || localStorage.getItem("aiProvider") || "";
+    sel.replaceChildren(...agents.map((a) => new Option(`${a.title}${a.ready ? "" : " (no API key)"}`, a.key)));
+    if (agents.some((a) => a.key === keep)) sel.value = keep;
+  }
+  $("aiHint").hidden = aiScen === "none";
+  $("aiHint").textContent = AI_HINT[aiScen] || "";
+  const sAi = s?.ai, st = state.ai_status;
+  $("aiCard").hidden = !(sAi && sAi.scenario !== "none");
+  if (sAi && sAi.scenario !== "none") {
+    $("aiName").textContent = `· ${sAi.agent || sAi.provider || ""} (${{ room: "room mic", laptop: "laptop loopback", api: "API" }[sAi.scenario]})`;
+    const api = sAi.scenario === "api";
+    const aiDev = devs.find((d) => d.label === sAi.device);
+    const label = api && st ? st.state : aiDev?.ai_speaking ? "speaking" : aiDev?.online ? "recording" : "offline";
+    $("aiState").textContent = label;
+    $("aiState").className = `flag ${label === "error" || label === "offline" ? "bad" : label === "speaking" ? "ok" : ""}`;
+    $("aiLast").textContent = api && st?.last_ai ? `AI: “${st.last_ai}”` : "";
+    $("aiHeard").textContent = api && st?.last_heard ? `Heard: “${st.last_heard}”` : "";
+    $("aiErr").textContent = api && st?.error ? st.error : "";
+    $("aiMuteRow").hidden = $("aiBtns").hidden = !(api && recording);
+    $("aiMute").checked = !!st?.muted;
+  }
 
   // all speaker iPads
   const spk = online.filter((d) => isSpk(d.label));

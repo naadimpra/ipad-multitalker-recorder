@@ -26,12 +26,19 @@ from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 
+<<<<<<< HEAD
+import numpy as np
+
+from ai_bridge.bridge import Bridge
+=======
 from tools.annotate import make_router as annotate_router
+>>>>>>> main
 from tools.common import raw_to_wav
 
 ROOT = Path(__file__).parent
 STATIC = ROOT / "static"
 REC_DIR = ROOT / "recordings"
+AI_CONFIG = ROOT / "ai_agents.json"
 CERT_DIR = ROOT / "certs"
 
 app = FastAPI()
@@ -84,6 +91,24 @@ def now_ms() -> float:
     return time.time() * 1000.0
 
 
+def load_ai_config() -> dict:
+    """ai_agents.json, re-read on every use so edits apply without a restart."""
+    try:
+        return json.loads(AI_CONFIG.read_text())
+    except Exception as e:  # noqa: BLE001
+        print(f"  ! ai_agents.json: {e}")
+        return {"agents": {}}
+
+
+def ai_agents_public() -> list[dict]:
+    import os
+    return [{"key": k, "title": a.get("title", k), "ready": bool(os.environ.get(a.get("key_env", ""), ""))}
+            for k, a in load_ai_config().get("agents", {}).items()]
+
+
+AI_SCENARIOS = ("none", "room", "laptop", "api")
+
+
 class Hub:
     def __init__(self) -> None:
         self.devices: dict[str, dict] = {}      # device_id -> info (incl. "ws")
@@ -93,6 +118,8 @@ class Hub:
         self.rotate = False        # "mics toward the participant" guide for speaker iPads
         self.rotate_epoch = 0      # bumps each time it is switched on, so devices ask again
         self.lock = asyncio.Lock()
+        self.bridge: Bridge | None = None   # API bridge of the running session (scenario "api")
+        self.ai_agents = ai_agents_public()
 
     # ---------- state ----------
     def public_devices(self) -> list[dict]:
@@ -110,10 +137,13 @@ class Hub:
                 "state": s["state"], "started_at": s["meta"]["started_at_ms"],
                 "finished": sorted(s["finished"]), "members": sorted(s["members"].values()),
                 "markers": len(s["meta"]["markers"]),
+                "ai": {k: s["meta"]["ai"].get(k) for k in ("scenario", "agent", "provider", "device")},
             }
+        b = self.bridge
         return {"type": "state", "server_ms": now_ms(), "devices": self.public_devices(),
                 "session": sess, "last_session": self.last_session,
-                "rotate": self.rotate, "build": static_build(), "update": UPDATE if UPDATE["available"] else None, "server_stale": server_src_hash() != SERVER_BOOT_HASH}
+                "rotate": self.rotate, "ai_agents": self.ai_agents,
+                "ai_status": b.status if b else None, "build": static_build(), "update": UPDATE if UPDATE["available"] else None, "server_stale": server_src_hash() != SERVER_BOOT_HASH}
 
     async def to_admins(self, msg: dict) -> None:
         dead = []
@@ -134,7 +164,7 @@ class Hub:
                 pass
 
     # ---------- session control ----------
-    async def start(self, name: str, mode: str, notes: str) -> str | None:
+    async def start(self, name: str, mode: str, notes: str, ai: dict | None = None) -> str | None:
         async with self.lock:
             if self.session:
                 return "A session is already running."
@@ -145,6 +175,30 @@ class Hub:
             dup = {l for l in labels if labels.count(l) > 1}
             if dup:
                 return f"Duplicate device labels: {', '.join(sorted(dup))}"
+            ai = ai or {}
+            scenario = ai.get("scenario") if ai.get("scenario") in AI_SCENARIOS else "none"
+            ai_devs = [did for did, d in armed.items() if is_ai(d["label"])]
+            ai_cfg = load_ai_config()
+            agent_cfg = None
+            if scenario != "none":
+                if not ai_devs:
+                    return ("AI agent selected, but no armed AI device. Name an iPad 'ai' (or start "
+                            "tools/loopback.py for the laptop scenario).")
+                if len(ai_devs) > 1 and scenario != "room":
+                    return "More than one AI device is armed; keep exactly one."
+                kinds = {armed[did].get("kind", "ipad") for did in ai_devs}
+                if scenario == "laptop" and kinds != {"loopback"}:
+                    return "Laptop scenario: the AI device must be tools/loopback.py, not an iPad."
+                if scenario in ("room", "api") and "loopback" in kinds:
+                    return "This scenario needs an iPad named 'ai' (the laptop loopback is connected instead)."
+                if scenario == "api":
+                    agent_cfg = ai_cfg.get("agents", {}).get(ai.get("provider", ""))
+                    if not agent_cfg:
+                        return "Choose an AI provider (configured in ai_agents.json)."
+                    import os
+                    if not os.environ.get(agent_cfg.get("key_env", ""), ""):
+                        return (f"No API key: set {agent_cfg.get('key_env')} in the terminal, then restart "
+                                "python server.py.")
 
             stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             slug = re.sub(r"[^A-Za-z0-9_-]+", "-", name).strip("-")[:40]
@@ -157,6 +211,12 @@ class Hub:
                 "started_at_ms": now_ms(), "stopped_at_ms": None,
                 "chirp": {"f0": 1000, "f1": 6000, "dur": 0.5},
                 "chirps": [], "markers": [], "devices": {},
+                "ai": {"scenario": scenario, "agent": str(ai.get("agent", ""))[:120],
+                       "provider": ai.get("provider", "") if scenario == "api" else "",
+                       "device": armed[ai_devs[0]]["label"] if scenario != "none" and ai_devs else "",
+                       "instructions": ai_cfg.get("instructions", "") if scenario == "api" else "",
+                       "barge_in": bool(ai_cfg.get("barge_in")) if scenario == "api" else None,
+                       "config": {k: v for k, v in (agent_cfg or {}).items() if k != "key_env"}},
             }
             members, files = {}, {}
             for did, d in armed.items():
@@ -168,14 +228,35 @@ class Hub:
                     "raw_file": f"{key}.f32", "wav_file": f"{key}.wav",
                     "mic": d.get("mic", ""), "clock_rtt_ms": d.get("rtt_ms"),
                     "first_sample_server_ms": None, "frames": None, "user_agent": d.get("ua", ""),
-                    "emotions": [], "ui_lang": d.get("lang", ""),
+                    "emotions": [], "ui_lang": d.get("lang", ""), "kind": d.get("kind", "ipad"),
                 }
+                dev = meta["devices"][key]
+                if d.get("channel_names"):           # e.g. the laptop loopback: ["ai", "mic"]
+                    dev["channel_names"] = d["channel_names"]
+                if d.get("chirp_channel") is not None:
+                    dev["chirp_channel"] = d["chirp_channel"]
+                if scenario == "api" and did == ai_devs[0]:
+                    # The AI iPad records its mic plus, as one extra channel, exactly what it plays.
+                    mic_ch = int(d.get("channels") or 1)
+                    dev["channels"] = mic_ch + 1
+                    dev["channel_names"] = (["mic"] if mic_ch == 1 else [f"mic{i + 1}" for i in range(mic_ch)]) + ["ai"]
+                    dev["chirp_channel"] = 0
+                    dev["ai_turns"] = []
                 files[did] = open(sdir / f"{key}.f32", "w+b")
             self.session = {"meta": meta, "dir": sdir, "members": members, "files": files,
                             "finished": set(), "state": "recording"}
+            if scenario == "api":
+                bdid = ai_devs[0]
+                self.bridge = Bridge(agent_cfg, meta["ai"]["instructions"], armed[bdid].get("sample_rate") or 48000,
+                                     sdir, send_bytes=lambda b, _d=bdid: self.to_device_bytes(_d, b),
+                                     send_json=lambda m, _d=bdid: self.to_device(_d, m), save=self._save_meta)
+                self.bridge.start()
             self._save_meta()
         for did in members:
-            await self.to_device(did, {"type": "start", "sid": sid})
+            msg = {"type": "start", "sid": sid}
+            if scenario == "api" and did == ai_devs[0]:
+                msg |= {"ai_bridge": True, "barge_in": bool(meta["ai"]["barge_in"])}
+            await self.to_device(did, msg)
         return None
 
     async def stop(self) -> None:
@@ -184,12 +265,20 @@ class Hub:
             return
         s["state"] = "stopping"
         s["meta"]["stopped_at_ms"] = now_ms()
+        await self.close_bridge()
         self._save_meta()
         for did in s["members"]:
             await self.to_device(did, {"type": "stop", "sid": s["meta"]["session_id"]})
 
+    async def close_bridge(self) -> None:
+        b, self.bridge = self.bridge, None
+        if b:
+            await b.close()
+            if self.session:
+                self.session["meta"]["ai"].update(b.export())
+
     async def device_finished(self, did: str, sid: str, frames: int, events: list,
-                              emotions: list | None = None) -> None:
+                              emotions: list | None = None, ai_turns: list | None = None) -> None:
         s = self.session
         if not s or sid != s["meta"]["session_id"] or did not in s["members"] or did in s["finished"]:
             return
@@ -198,6 +287,8 @@ class Hub:
         dev["events"] = events
         if emotions is not None:  # the device's own full list replaces the live-streamed copy
             dev["emotions"] = emotions
+        if ai_turns is not None and "ai_turns" in dev:
+            dev["ai_turns"] = ai_turns
         f = s["files"].pop(did)
         f.flush()
         f.close()
@@ -228,6 +319,7 @@ class Hub:
         await self._close()
 
     async def _close(self) -> None:
+        await self.close_bridge()
         s = self.session
         s["meta"]["closed_at_ms"] = now_ms()
         self._save_meta()
@@ -237,13 +329,28 @@ class Hub:
 
     def _save_meta(self) -> None:
         s = self.session
+        if not s:
+            return
+        if self.bridge:
+            s["meta"]["ai"].update(self.bridge.export())
         (s["dir"] / "session.json").write_text(json.dumps(s["meta"], indent=2, ensure_ascii=False))
 
     # ---------- audio chunks ----------
-    def write_chunk(self, did: str, data: bytes) -> int | None:
-        (hlen,) = struct.unpack_from("<I", data, 0)
-        hdr = json.loads(data[4:4 + hlen])
-        payload = data[4 + hlen:]
+    async def to_device_bytes(self, did: str, data: bytes) -> None:
+        d = self.devices.get(did)
+        if d and d.get("ws"):
+            try:
+                await d["ws"].send_bytes(data)
+            except Exception:
+                pass
+
+    def ai_input(self, did: str, hdr: dict, payload: bytes) -> None:
+        """Live mic audio from the AI iPad, forwarded to the AI service (not the archival upload)."""
+        s, b = self.session, self.bridge
+        if b and s and hdr.get("sid") == s["meta"]["session_id"] and s["members"].get(did) == s["meta"]["ai"]["device"]:
+            b.feed(np.frombuffer(payload, dtype="<f4"), hdr.get("frame"))
+
+    def write_chunk(self, did: str, hdr: dict, payload: bytes) -> int | None:
         s = self.session
         if not s or hdr["sid"] != s["meta"]["session_id"] or did not in s["files"]:
             return hdr["seq"]  # stale chunk: ack so the client drops it
@@ -304,8 +411,13 @@ def clean_label(s) -> str:
     return re.sub(r"[^A-Za-z0-9_-]+", "", str(s or ""))[:24]
 
 
+def is_ai(label) -> bool:
+    """'ai', 'ai2', 'ai-gemini', ... are AI-agent tracks, not people."""
+    return bool(re.fullmatch(r"ai([-_0-9][A-Za-z0-9_-]*)?", str(label or "")))
+
+
 def is_speaker(label) -> bool:
-    return bool(label) and label not in ("center", "lav")
+    return bool(label) and label not in ("center", "lav") and not is_ai(label)
 
 
 # ---------------- HTTP routes ----------------
@@ -358,7 +470,13 @@ async def ws_endpoint(ws: WebSocket):
                 break
             if msg.get("bytes") is not None:
                 if role == "device":
-                    seq = hub.write_chunk(did, msg["bytes"])
+                    data = msg["bytes"]
+                    (hlen,) = struct.unpack_from("<I", data, 0)
+                    hdr = json.loads(data[4:4 + hlen])
+                    if hdr.get("kind") == "ai_in":
+                        hub.ai_input(did, hdr, data[4 + hlen:])
+                        continue
+                    seq = hub.write_chunk(did, hdr, data[4 + hlen:])
                     await ws.send_text(json.dumps({"type": "ack", "seq": seq}))
                 continue
             m = json.loads(msg["text"])
@@ -387,7 +505,15 @@ async def ws_endpoint(ws: WebSocket):
                 hub.devices.setdefault(did, {}).update({k: v for k, v in m.items() if k != "type"})
             elif t == "finished" and role == "device":
                 await hub.device_finished(did, m.get("sid"), m["frames"], m.get("events", []),
-                                          m.get("emotions"))
+                                          m.get("emotions"), m.get("ai_turns"))
+            elif t == "ai_turn" and role == "device":
+                # live copy of when the AI iPad played each AI turn (frames of its own recording)
+                s = hub.session
+                if s and did in s["members"] and m.get("sid") == s["meta"]["session_id"]:
+                    dev = s["meta"]["devices"][s["members"][did]]
+                    if "ai_turns" in dev:
+                        dev["ai_turns"].append({k: m.get(k) for k in ("turn", "start_frame", "end_frame")})
+                        hub._save_meta()
             elif t == "emotion" and role == "device":
                 # live copy, so labels survive if the iPad page dies before it reports "finished"
                 s = hub.session
@@ -398,7 +524,7 @@ async def ws_endpoint(ws: WebSocket):
                     hub._save_meta()
             elif role == "admin":
                 if t == "start":
-                    err = await hub.start(m.get("name", ""), m.get("mode", "B"), m.get("notes", ""))
+                    err = await hub.start(m.get("name", ""), m.get("mode", "B"), m.get("notes", ""), m.get("ai"))
                     if err:
                         await ws.send_text(json.dumps({"type": "error", "text": err}))
                 elif t == "stop":
@@ -411,6 +537,12 @@ async def ws_endpoint(ws: WebSocket):
                     key = "chirps" if t == "chirp" else "markers"
                     hub.session["meta"][key].append(ev)
                     hub._save_meta()
+                elif t == "ai_interrupt" and hub.bridge:
+                    await hub.bridge.interrupt()
+                elif t == "ai_mute" and hub.bridge:
+                    hub.bridge.set_muted(bool(m.get("on")))
+                elif t == "ai_agents":
+                    hub.ai_agents = ai_agents_public()   # re-read ai_agents.json + API keys
                 elif t == "identify":
                     await hub.to_device(m["id"], {"type": "identify"})
                 elif t == "remove":

@@ -19,6 +19,7 @@ from __future__ import annotations
 import argparse
 import bisect
 import csv
+import re
 from collections import defaultdict
 from pathlib import Path
 
@@ -109,8 +110,16 @@ def main() -> None:
     speech = read_rttm(rttm)
     timelines = read_emotions(emo_file, args.shift)
     rows, totals = [], defaultdict(float)
+    ai_names = {k: d.get("speaker_id") or ("AI" if k == "ai" else k.upper())
+                for k, d in meta["devices"].items() if re.fullmatch(r"ai([-_0-9][A-Za-z0-9_-]*)?", k)}
+    for k, name in ai_names.items():
+        to_device[name] = k
     for spk, segs in sorted(speech.items()):
         dev = to_device.get(spk)
+        if dev in ai_names:  # the AI agent has no emotion buttons
+            for s, e in segs:
+                rows.append((spk, dev, s, e, "-"))
+            continue
         if dev is None or dev not in timelines:
             print(f"  ! no emotion labels for speaker '{spk}' -> '{UNLABELED}'")
         tl = timelines.get(dev or "", [])
